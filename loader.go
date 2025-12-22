@@ -3,19 +3,17 @@ package envx
 import (
 	"fmt"
 	"os"
-	"sync/atomic"
+	"sync"
 	"time"
 )
 
 // Load loads configuration into T using environment variables.
-// Field names are converted to SCREAMING_SNAKE_CASE for env var lookup.
 func Load[T any](opts ...Option) (*T, error) {
 	o := &options{output: os.Stdout}
 	for _, opt := range opts {
 		opt(o)
 	}
 
-	// Default providers: defaults from tags, then env
 	if len(o.providers) == 0 {
 		o.providers = []Provider{
 			Defaults[T](),
@@ -23,8 +21,7 @@ func Load[T any](opts ...Option) (*T, error) {
 		}
 	}
 
-	// Merge all providers
-	values := make(map[string]string)
+	values := make(map[string]any)
 	for _, p := range o.providers {
 		v, err := p.Values()
 		if err != nil {
@@ -35,25 +32,21 @@ func Load[T any](opts ...Option) (*T, error) {
 		}
 	}
 
-	// Parse into struct
 	var cfg T
 	if err := parse(&cfg, values, o.prefix); err != nil {
 		return nil, err
 	}
 
-	// Validate required fields
 	if err := validateRequired(&cfg); err != nil {
 		return nil, err
 	}
 
-	// Custom validator
 	if o.validator != nil {
 		if err := o.validator(&cfg); err != nil {
 			return nil, &Error{Field: "config", Err: fmt.Errorf("%w: %v", ErrValidation, err)}
 		}
 	}
 
-	// Interface validator
 	if v, ok := any(&cfg).(Validator); ok {
 		if err := v.Validate(); err != nil {
 			return nil, &Error{Field: "config", Err: fmt.Errorf("%w: %v", ErrValidation, err)}
@@ -74,24 +67,23 @@ func MustLoad[T any](opts ...Option) *T {
 
 // Loader provides hot-reloading capabilities.
 type Loader[T any] struct {
-	opts     []Option
-	config   atomic.Pointer[T]
-	version  atomic.Int64
-	stop     chan struct{}
-	onReload func()
+	opts       []Option
+	config     *T
+	version    int64
+	stop       chan struct{}
+	mu         sync.RWMutex // Protects config, version, stop, isWatching
+	isWatching bool
+	onReload   func()
 }
 
 // NewLoader creates a loader for hot-reloadable configuration.
 func NewLoader[T any](opts ...Option) *Loader[T] {
 	l := &Loader[T]{opts: opts}
-
-	// Extract onReload callback
 	o := &options{}
 	for _, opt := range opts {
 		opt(o)
 	}
 	l.onReload = o.onReload
-
 	return l
 }
 
@@ -101,8 +93,11 @@ func (l *Loader[T]) Load() (*T, error) {
 	if err != nil {
 		return nil, err
 	}
-	l.config.Store(cfg)
-	l.version.Add(1)
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.config = cfg
+	l.version++
 	return cfg, nil
 }
 
@@ -117,16 +112,27 @@ func (l *Loader[T]) MustLoad() *T {
 
 // Get returns the current configuration.
 func (l *Loader[T]) Get() *T {
-	return l.config.Load()
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.config
 }
 
-// Version returns the configuration version (increments on reload).
+// Version returns the configuration version.
 func (l *Loader[T]) Version() int64 {
-	return l.version.Load()
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.version
 }
 
 // StartWatching starts watching for file changes.
 func (l *Loader[T]) StartWatching() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.isWatching {
+		return
+	}
+
 	o := &options{}
 	for _, opt := range l.opts {
 		opt(o)
@@ -137,6 +143,7 @@ func (l *Loader[T]) StartWatching() {
 	}
 
 	l.stop = make(chan struct{})
+	l.isWatching = true
 	var lastMod time.Time
 
 	if info, err := os.Stat(o.watchPath); err == nil {
@@ -158,6 +165,8 @@ func (l *Loader[T]) StartWatching() {
 				}
 				if info.ModTime().After(lastMod) {
 					lastMod = info.ModTime()
+					// Load needs lock, but we call it from outside the lock loop
+					// Load itself acquires lock. Safe.
 					if _, err := l.Load(); err == nil && l.onReload != nil {
 						l.onReload()
 					}
@@ -169,7 +178,16 @@ func (l *Loader[T]) StartWatching() {
 
 // StopWatching stops the file watcher.
 func (l *Loader[T]) StopWatching() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if !l.isWatching {
+		return
+	}
+
 	if l.stop != nil {
 		close(l.stop)
+		l.stop = nil
 	}
+	l.isWatching = false
 }
