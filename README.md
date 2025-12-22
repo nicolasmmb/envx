@@ -1,11 +1,11 @@
 <div align="center">
 
-# ⚙️ envconfig
+# ⚙️ envx
 
 ### Type-safe configuration for Go applications
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/nicolasmmb/envconfig.svg)](https://pkg.go.dev/github.com/nicolasmmb/envconfig)
-[![Go Report Card](https://goreportcard.com/badge/github.com/nicolasmmb/envconfig)](https://goreportcard.com/report/github.com/nicolasmmb/envconfig)
+[![Go Reference](https://pkg.go.dev/badge/github.com/nicolasmmb/envx.svg)](https://pkg.go.dev/github.com/nicolasmmb/envx)
+[![Go Report Card](https://goreportcard.com/badge/github.com/nicolasmmb/envx)](https://goreportcard.com/report/github.com/nicolasmmb/envx)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://go.dev/)
 
@@ -20,7 +20,7 @@
 
 </div>
 
-## ✨ Why envconfig?
+## ✨ Why envx?
 
 ```go
 type Config struct {
@@ -30,7 +30,7 @@ type Config struct {
     Timeout     time.Duration `default:"30s"`
 }
 
-cfg := envconfig.MustLoad[Config]()
+cfg := envx.MustLoad[Config]()
 ```
 
 | Field | Environment Variable |
@@ -80,10 +80,8 @@ Watch files and reload on changes.
 ## 📦 Installation
 
 ```bash
-go get github.com/nicolasmmb/envconfig
+go get github.com/nicolasmmb/envx
 ```
-
-**Requirements:** Go 1.21 or later
 
 ---
 
@@ -94,7 +92,7 @@ package main
 
 import (
     "fmt"
-    "github.com/nicolasmmb/envconfig"
+    "github.com/nicolasmmb/envx"
 )
 
 type Config struct {
@@ -104,7 +102,7 @@ type Config struct {
 }
 
 func main() {
-    cfg, err := envconfig.Load[Config]()
+    cfg, err := envx.Load[Config]()
     if err != nil {
         panic(err)
     }
@@ -172,8 +170,8 @@ export DATABASE_POOL_SIZE="20"
 ### Environment Prefix
 
 ```go
-cfg, _ := envconfig.Load[Config](
-    envconfig.WithPrefix("MYAPP"),
+cfg, _ := envx.Load[Config](
+    envx.WithPrefix("MYAPP"),
 )
 // Port → MYAPP_PORT
 // DatabaseURL → MYAPP_DATABASE_URL
@@ -182,18 +180,18 @@ cfg, _ := envconfig.Load[Config](
 ### Multiple Sources
 
 ```go
-cfg, _ := envconfig.Load[Config](
-    envconfig.WithProvider(envconfig.Defaults[Config]()), // 1️⃣ Defaults
-    envconfig.WithProvider(envconfig.File("config.json")), // 2️⃣ File
-    envconfig.WithProvider(envconfig.Env()),               // 3️⃣ Environment
+cfg, _ := envx.Load[Config](
+    envx.WithProvider(envx.Defaults[Config]()), // 1️⃣ Defaults
+    envx.WithProvider(envx.File("config.json")), // 2️⃣ File
+    envx.WithProvider(envx.Env()),               // 3️⃣ Environment
 )
 ```
 
 ### Custom Validation
 
 ```go
-cfg, err := envconfig.Load[Config](
-    envconfig.WithValidator(func(cfg any) error {
+cfg, err := envx.Load[Config](
+    envx.WithValidator(func(cfg any) error {
         c := cfg.(*Config)
         if c.Port < 1024 {
             return errors.New("port must be >= 1024")
@@ -206,10 +204,10 @@ cfg, err := envconfig.Load[Config](
 ### Hot Reload
 
 ```go
-loader := envconfig.NewLoader[Config](
-    envconfig.WithProvider(envconfig.File("config.json")),
-    envconfig.WithWatch("config.json", 5*time.Second),
-    envconfig.WithOnReload(func() {
+loader := envx.NewLoader[Config](
+    envx.WithProvider(envx.File("config.json")),
+    envx.WithWatch("config.json", 5*time.Second),
+    envx.WithOnReload(func() {
         log.Println("⚡ Config reloaded!")
     }),
 )
@@ -236,8 +234,8 @@ func (p *VaultProvider) Values() (map[string]string, error) {
     }, nil
 }
 
-cfg, _ := envconfig.Load[Config](
-    envconfig.WithProvider(&VaultProvider{Address: "vault:8200"}),
+cfg, _ := envx.Load[Config](
+    envx.WithProvider(&VaultProvider{Address: "vault:8200"}),
 )
 ```
 
@@ -246,7 +244,7 @@ cfg, _ := envconfig.Load[Config](
 ## 🖨️ Printing Config
 
 ```go
-envconfig.Print(cfg)
+envx.Print(cfg)
 ```
 
 ```
@@ -309,8 +307,8 @@ type Config struct {
 }
 
 func main() {
-    cfg := envconfig.MustLoad[Config]()
-    envconfig.Print(cfg)
+    cfg := envx.MustLoad[Config]()
+    envx.Print(cfg)
     
     // Use cfg.Server.Port, cfg.Database.URL, etc.
 }
@@ -341,7 +339,7 @@ func (c *Config) Validate() error {
 }
 
 func main() {
-    cfg, err := envconfig.Load[Config]()
+    cfg, err := envx.Load[Config]()
     if err != nil {
         log.Fatalf("Config error: %v", err)
     }
@@ -357,29 +355,29 @@ func main() {
 func loadConfig() *Config {
     env := os.Getenv("APP_ENV")
     
-    loader := envconfig.NewLoader[Config](
-        envconfig.WithProvider(envconfig.Defaults[Config]()),
+    loader := envx.NewLoader[Config](
+        envx.WithProvider(envx.Defaults[Config]()),
     )
     
     // Load environment-specific file
     switch env {
     case "production":
-        loader = envconfig.NewLoader[Config](
-            envconfig.WithProvider(envconfig.Defaults[Config]()),
-            envconfig.WithProvider(envconfig.File("config.prod.json")),
-            envconfig.WithProvider(envconfig.Env()),
+        loader = envx.NewLoader[Config](
+            envx.WithProvider(envx.Defaults[Config]()),
+            envx.WithProvider(envx.File("config.prod.json")),
+            envx.WithProvider(envx.Env()),
         )
     case "staging":
-        loader = envconfig.NewLoader[Config](
-            envconfig.WithProvider(envconfig.Defaults[Config]()),
-            envconfig.WithProvider(envconfig.File("config.staging.json")),
-            envconfig.WithProvider(envconfig.Env()),
+        loader = envx.NewLoader[Config](
+            envx.WithProvider(envx.Defaults[Config]()),
+            envx.WithProvider(envx.File("config.staging.json")),
+            envx.WithProvider(envx.Env()),
         )
     default:
-        loader = envconfig.NewLoader[Config](
-            envconfig.WithProvider(envconfig.Defaults[Config]()),
-            envconfig.WithProvider(envconfig.File("config.local.json")),
-            envconfig.WithProvider(envconfig.Env()),
+        loader = envx.NewLoader[Config](
+            envx.WithProvider(envx.Defaults[Config]()),
+            envx.WithProvider(envx.File("config.local.json")),
+            envx.WithProvider(envx.Env()),
         )
     }
     
@@ -396,34 +394,34 @@ func loadConfig() *Config {
 ### Load Functions
 
 ```go
-cfg, err := envconfig.Load[T](opts...)    // Load with error
-cfg := envconfig.MustLoad[T](opts...)      // Load or panic
+cfg, err := envx.Load[T](opts...)    // Load with error
+cfg := envx.MustLoad[T](opts...)      // Load or panic
 ```
 
 ### Options
 
 ```go
-envconfig.WithPrefix(prefix)        // Env var prefix
-envconfig.WithProvider(p)           // Add provider
-envconfig.WithValidator(fn)         // Custom validator
-envconfig.WithWatch(path, interval) // File watching
-envconfig.WithOnReload(fn)          // Reload callback
-envconfig.WithOutput(w)             // Print writer
+envx.WithPrefix(prefix)        // Env var prefix
+envx.WithProvider(p)           // Add provider
+envx.WithValidator(fn)         // Custom validator
+envx.WithWatch(path, interval) // File watching
+envx.WithOnReload(fn)          // Reload callback
+envx.WithOutput(w)             // Print writer
 ```
 
 ### Providers
 
 ```go
-envconfig.Defaults[T]()             // Struct tag defaults
-envconfig.Env()                     // Environment variables
-envconfig.File(path)                // JSON file
-envconfig.Map(m)                    // String map
+envx.Defaults[T]()             // Struct tag defaults
+envx.Env()                     // Environment variables
+envx.File(path)                // JSON file
+envx.Map(m)                    // String map
 ```
 
 ### Loader (Hot Reload)
 
 ```go
-loader := envconfig.NewLoader[T](opts...)
+loader := envx.NewLoader[T](opts...)
 loader.Load()          // Load config
 loader.MustLoad()      // Load or panic
 loader.Get()           // Get current config
@@ -435,10 +433,10 @@ loader.StopWatching()  // Stop file watcher
 ### Errors
 
 ```go
-envconfig.ErrRequired        // Required field empty
-envconfig.ErrValidation      // Validation failed
-envconfig.ErrParse           // Parse error
-envconfig.ErrUnsupportedType // Unsupported type
+envx.ErrRequired        // Required field empty
+envx.ErrValidation      // Validation failed
+envx.ErrParse           // Parse error
+envx.ErrUnsupportedType // Unsupported type
 ```
 
 ---
@@ -462,8 +460,6 @@ MIT License - see the [LICENSE](LICENSE) file for details.
 ---
 
 <div align="center">
-
-**Made with ❤️ by [Nicolas MMB](https://github.com/nicolasmmb)**
 
 ⭐ Star this repo if you find it useful!
 
