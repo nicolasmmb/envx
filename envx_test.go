@@ -3,6 +3,8 @@ package envx
 import (
 	"bytes"
 	"os"
+	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -135,6 +137,65 @@ func TestLoad_Slice(t *testing.T) {
 	}
 	if cfg.Hosts[0] != "host1" {
 		t.Errorf("Hosts[0] = %s, want host1", cfg.Hosts[0])
+	}
+}
+
+func TestLoad_SliceCSV(t *testing.T) {
+	os.Setenv("ORIGINS", `"http://a.com","http://b.com,c.com"`)
+	t.Cleanup(func() { os.Unsetenv("ORIGINS") })
+
+	type Config struct {
+		Origins []string
+	}
+
+	cfg, err := Load[Config]()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(cfg.Origins) != 2 {
+		t.Fatalf("len(Origins) = %d, want 2", len(cfg.Origins))
+	}
+	if cfg.Origins[0] != "http://a.com" {
+		t.Errorf("Origins[0] = %s, want http://a.com", cfg.Origins[0])
+	}
+	if cfg.Origins[1] != "http://b.com,c.com" {
+		t.Errorf("Origins[1] = %s, want http://b.com,c.com", cfg.Origins[1])
+	}
+}
+
+func TestLoad_DotEnv(t *testing.T) {
+	content := `
+# Comment
+PORT=9090
+HOST="127.0.0.1"
+DEBUG=true
+`
+	tmpfile := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(tmpfile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	type Config struct {
+		Port  int
+		Host  string
+		Debug bool
+	}
+
+	// Use File provider explicitly pointing to .env
+	cfg, err := Load[Config](WithProvider(File(tmpfile)))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.Port != 9090 {
+		t.Errorf("Port = %d, want 9090", cfg.Port)
+	}
+	if cfg.Host != "127.0.0.1" {
+		t.Errorf("Host = %s, want 127.0.0.1", cfg.Host)
+	}
+	if !cfg.Debug {
+		t.Error("Debug = false, want true")
 	}
 }
 
@@ -285,6 +346,7 @@ func TestToScreamingSnake(t *testing.T) {
 		{"DatabaseURL", "DATABASE_URL"},
 		{"JWTSecret", "JWT_SECRET"},
 		{"HTTPServer", "HTTP_SERVER"},
+		{"HTTPServer", "HTTP_SERVER"},
 	}
 
 	for _, tc := range tests {
@@ -292,5 +354,91 @@ func TestToScreamingSnake(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("toScreamingSnake(%q) = %q, want %q", tc.input, got, tc.want)
 		}
+	}
+}
+
+func TestLoader_Concurrency(t *testing.T) {
+	loader := NewLoader[struct{}](WithWatch("config.json", 100*time.Millisecond))
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		loader.StartWatching()
+	}()
+
+	go func() {
+		defer wg.Done()
+		loader.StartWatching()
+	}()
+
+	wg.Wait()
+	loader.StopWatching()
+	loader.StopWatching()
+}
+
+func TestLoader_OnReload(t *testing.T) {
+	// Create temp file
+	tmpfile := filepath.Join(t.TempDir(), "config.json")
+	initialContent := `{"port": 8080, "debug": false}`
+	if err := os.WriteFile(tmpfile, []byte(initialContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	type Config struct {
+		Port  int  `default:"8080"`
+		Debug bool `default:"false"`
+	}
+
+	var mu sync.Mutex
+	var oldCfg, newCfg *Config
+	changesChan := make(chan struct{}, 1)
+
+	// Callback
+	onReload := func(old *Config, new *Config) {
+		mu.Lock()
+		oldCfg = old
+		newCfg = new
+		mu.Unlock()
+		select {
+		case changesChan <- struct{}{}:
+		default:
+		}
+	}
+
+	loader := NewLoader[Config](
+		WithWatch(tmpfile, 50*time.Millisecond),
+		WithProvider(File(tmpfile)),
+		WithOnReload(onReload),
+	)
+
+	// Initial load
+	loader.MustLoad()
+	loader.StartWatching()
+	defer loader.StopWatching()
+
+	// Modify file - Change Port
+	newContent := `{"port": 9090, "debug": false}`
+	time.Sleep(100 * time.Millisecond) // Ensure mtime passes
+	if err := os.WriteFile(tmpfile, []byte(newContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for reload
+	select {
+	case <-changesChan:
+		mu.Lock()
+		defer mu.Unlock()
+
+		if oldCfg.Port != 8080 {
+			t.Errorf("expected old Port 8080, got %d", oldCfg.Port)
+		}
+		if newCfg.Port != 9090 {
+			t.Errorf("expected new Port 9090, got %d", newCfg.Port)
+		}
+
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for reload callback")
 	}
 }

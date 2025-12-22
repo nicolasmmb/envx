@@ -1,4 +1,4 @@
-// Example demonstrates basic usage of envconfig
+// Example demonstrates basic usage of envx
 package main
 
 import (

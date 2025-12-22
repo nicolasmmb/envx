@@ -28,8 +28,18 @@
 //
 //   - Env()         - Environment variables
 //   - Defaults[T]() - Default values from struct tags
-//   - File(path)    - JSON configuration file
+//   - File(path)    - JSON or .env configuration file
 //   - Map(values)   - Explicit key-value map
+//
+// # Combining Providers
+//
+// To combine a .env file with system environment variables:
+//
+//	envx.Load[Config](
+//	    envx.WithProvider(envx.Defaults[Config]()),
+//	    envx.WithProvider(envx.File(".env")), // .env overrides defaults
+//	    envx.WithProvider(envx.Env()),         // System env overrides .env
+//	)
 //
 // # Hot Reloading
 //

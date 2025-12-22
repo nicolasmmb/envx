@@ -3,12 +3,18 @@ package envx
 import (
 	"fmt"
 	"os"
+	"reflect"
 	"sync"
 	"time"
 )
 
 // Load loads configuration into T using environment variables.
 func Load[T any](opts ...Option) (*T, error) {
+	_, cfg, err := loadInternal[T](opts...)
+	return cfg, err
+}
+
+func loadInternal[T any](opts ...Option) (map[string]any, *T, error) {
 	o := &options{output: os.Stdout}
 	for _, opt := range opts {
 		opt(o)
@@ -25,7 +31,7 @@ func Load[T any](opts ...Option) (*T, error) {
 	for _, p := range o.providers {
 		v, err := p.Values()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for k, val := range v {
 			values[k] = val
@@ -34,26 +40,26 @@ func Load[T any](opts ...Option) (*T, error) {
 
 	var cfg T
 	if err := parse(&cfg, values, o.prefix); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if err := validateRequired(&cfg); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if o.validator != nil {
 		if err := o.validator(&cfg); err != nil {
-			return nil, &Error{Field: "config", Err: fmt.Errorf("%w: %v", ErrValidation, err)}
+			return nil, nil, &Error{Field: "config", Err: fmt.Errorf("%w: %v", ErrValidation, err)}
 		}
 	}
 
 	if v, ok := any(&cfg).(Validator); ok {
 		if err := v.Validate(); err != nil {
-			return nil, &Error{Field: "config", Err: fmt.Errorf("%w: %v", ErrValidation, err)}
+			return nil, nil, &Error{Field: "config", Err: fmt.Errorf("%w: %v", ErrValidation, err)}
 		}
 	}
 
-	return &cfg, nil
+	return values, &cfg, nil
 }
 
 // MustLoad is like Load but panics on error.
@@ -71,9 +77,9 @@ type Loader[T any] struct {
 	config     *T
 	version    int64
 	stop       chan struct{}
-	mu         sync.RWMutex // Protects config, version, stop, isWatching
+	mu         sync.RWMutex
 	isWatching bool
-	onReload   func()
+	onReload   func(any, any)
 }
 
 // NewLoader creates a loader for hot-reloadable configuration.
@@ -89,15 +95,20 @@ func NewLoader[T any](opts ...Option) *Loader[T] {
 
 // Load loads the configuration.
 func (l *Loader[T]) Load() (*T, error) {
-	cfg, err := Load[T](l.opts...)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.loadLocked()
+}
+
+func (l *Loader[T]) loadLocked() (*T, error) {
+	_, cfg, err := loadInternal[T](l.opts...)
 	if err != nil {
 		return nil, err
 	}
 
-	l.mu.Lock()
-	defer l.mu.Unlock()
 	l.config = cfg
 	l.version++
+
 	return cfg, nil
 }
 
@@ -142,6 +153,13 @@ func (l *Loader[T]) StartWatching() {
 		return
 	}
 
+	// Initial load to ensure we have a base config
+	if l.config == nil {
+		if _, err := l.loadLocked(); err != nil {
+			// ignore error on initial load attempt in background?
+		}
+	}
+
 	l.stop = make(chan struct{})
 	l.isWatching = true
 	var lastMod time.Time
@@ -165,11 +183,30 @@ func (l *Loader[T]) StartWatching() {
 				}
 				if info.ModTime().After(lastMod) {
 					lastMod = info.ModTime()
-					// Load needs lock, but we call it from outside the lock loop
-					// Load itself acquires lock. Safe.
-					if _, err := l.Load(); err == nil && l.onReload != nil {
-						l.onReload()
+
+					l.mu.Lock()
+					oldConfig := l.config
+					_, newConfig, err := loadInternal[T](l.opts...)
+
+					if err == nil {
+						// Only notify/update if something actually changed deep inside?
+						// Or just notify always on file change?
+						// Usually file mod implies change.
+						// Checking DeepEqual prevents spurious updates if file touched but content same.
+						changed := !reflect.DeepEqual(oldConfig, newConfig)
+
+						if changed {
+							l.config = newConfig
+							l.version++
+							if l.onReload != nil {
+								// Call callback in goroutine to avoid blocking/deadlock?
+								// Since we hold lock, calling user code is risky.
+								// But capturing old/new is fine.
+								go l.onReload(oldConfig, newConfig)
+							}
+						}
 					}
+					l.mu.Unlock()
 				}
 			}
 		}
