@@ -457,7 +457,6 @@ envx.WithOnReload(fn)          // Reload callback
 envx.WithOnReloadError(fn)     // Reload error callback
 envx.WithLogger(logger)        // Custom logger (implements Printf)
 envx.WithOutput(w)             // Convenience to log to a writer
-envx.WithKeyMapper(mapper)     // Custom key mapping (field -> env key)
 ```
 
 > 🔁 File watching starts only when the initial load succeeds and the interval is greater than zero.

@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func parseWithMapper(cfg any, values map[string]any, prefix string, mapper KeyMapper) error {
+func parse(cfg any, values map[string]any, prefix string) error {
 	rv := reflect.ValueOf(cfg)
 	if rv.Kind() != reflect.Pointer || rv.IsNil() {
 		return &Error{Field: "config", Err: fmt.Errorf("%w: target must be a non-nil pointer to a struct", ErrUnsupportedType)}
@@ -20,14 +20,10 @@ func parseWithMapper(cfg any, values map[string]any, prefix string, mapper KeyMa
 		return &Error{Field: "config", Err: fmt.Errorf("%w: target must point to a struct, got %s", ErrUnsupportedType, v.Kind())}
 	}
 
-	if mapper == nil {
-		mapper = defaultMapper
-	}
-
-	return parseStruct(v, v.Type(), "", values, prefix, mapper)
+	return parseStruct(v, v.Type(), "", values, prefix)
 }
 
-func parseStruct(v reflect.Value, t reflect.Type, path string, values map[string]any, prefix string, mapper KeyMapper) error {
+func parseStruct(v reflect.Value, t reflect.Type, path string, values map[string]any, prefix string) error {
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 		fv := v.Field(i)
@@ -37,14 +33,14 @@ func parseStruct(v reflect.Value, t reflect.Type, path string, values map[string
 		}
 
 		if field.Type.Kind() == reflect.Struct && field.Type != reflect.TypeOf(time.Time{}) {
-			nestedPath := path + mapper.Field(field.Name) + "_"
-			if err := parseStruct(fv, field.Type, nestedPath, values, prefix, mapper); err != nil {
+			nestedPath := path + toScreamingSnake(field.Name) + "_"
+			if err := parseStruct(fv, field.Type, nestedPath, values, prefix); err != nil {
 				return err
 			}
 			continue
 		}
 
-		key := path + mapper.Field(field.Name)
+		key := path + toScreamingSnake(field.Name)
 		if prefix != "" {
 			key = prefix + "_" + key
 		}

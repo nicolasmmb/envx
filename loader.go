@@ -29,9 +29,6 @@ func loadInternal[T any](opts ...Option) (map[string]any, *T, error) {
 
 	values := make(map[string]any)
 	for _, p := range o.providers {
-		if sm, ok := p.(interface{ setMapper(KeyMapper) }); ok {
-			sm.setMapper(o.mapper)
-		}
 		v, err := p.Values()
 		if err != nil {
 			return nil, nil, err
@@ -46,7 +43,7 @@ func loadInternal[T any](opts ...Option) (map[string]any, *T, error) {
 	}
 
 	var cfg T
-	if err := parseWithMapper(&cfg, values, o.prefix, o.mapper); err != nil {
+	if err := parse(&cfg, values, o.prefix); err != nil {
 		return nil, nil, err
 	}
 
@@ -77,9 +74,6 @@ func prepareOptions[T any](opts []Option) *options {
 func finalizeOptions[T any](o *options) {
 	if o.logger == nil {
 		o.logger = newWriterLogger(os.Stdout)
-	}
-	if o.mapper == nil {
-		o.mapper = defaultMapper
 	}
 	if len(o.providers) == 0 {
 		o.providers = []Provider{

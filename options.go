@@ -18,7 +18,6 @@ type options struct {
 	onReload      func(any, any)
 	onReloadError func(error)
 	validator     func(any) error
-	mapper        KeyMapper
 	watchPath     string
 	watchEvery    time.Duration
 }
@@ -62,12 +61,6 @@ func WithOnReload[T any](fn func(old *T, new *T)) Option {
 func WithOnReloadError(fn func(error)) Option {
 	return func(o *options) {
 		o.onReloadError = fn
-	}
-}
-
-func WithKeyMapper(mapper KeyMapper) Option {
-	return func(o *options) {
-		o.mapper = mapper
 	}
 }
 

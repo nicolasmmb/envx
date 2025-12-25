@@ -30,7 +30,6 @@ func (p *envProvider) Values() (map[string]any, error) {
 
 type defaultsProvider[T any] struct {
 	prefix string
-	mapper KeyMapper
 }
 
 func (p *defaultsProvider[T]) PrefixAware() bool { return true }
@@ -40,13 +39,7 @@ func Defaults[T any]() Provider {
 }
 
 func DefaultsWithPrefix[T any](prefix string) Provider {
-	return &defaultsProvider[T]{prefix: strings.ToUpper(prefix), mapper: defaultMapper}
-}
-
-func (p *defaultsProvider[T]) setMapper(mapper KeyMapper) {
-	if mapper != nil {
-		p.mapper = mapper
-	}
+	return &defaultsProvider[T]{prefix: strings.ToUpper(prefix)}
 }
 
 func (p *defaultsProvider[T]) Values() (map[string]any, error) {
@@ -55,11 +48,7 @@ func (p *defaultsProvider[T]) Values() (map[string]any, error) {
 		return nil, err
 	}
 
-	if p.mapper == nil {
-		p.mapper = defaultMapper
-	}
-
-	strDefaults := extractDefaults(t, "", p.mapper)
+	strDefaults := extractDefaults(t, "")
 
 	values := make(map[string]any)
 	for k, v := range strDefaults {
@@ -72,34 +61,33 @@ func (p *defaultsProvider[T]) Values() (map[string]any, error) {
 	return values, nil
 }
 
-func extractDefaults(t reflect.Type, path string, mapper KeyMapper) map[string]string {
+func extractDefaults(t reflect.Type, path string) map[string]string {
 	values := make(map[string]string)
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 
 		if field.Type.Kind() == reflect.Struct && field.Type != reflect.TypeOf(time.Time{}) {
-			nestedPath := path + mapper.Field(field.Name) + "_"
-			for k, v := range extractDefaults(field.Type, nestedPath, mapper) {
+			nestedPath := path + toScreamingSnake(field.Name) + "_"
+			for k, v := range extractDefaults(field.Type, nestedPath) {
 				values[k] = v
 			}
 			continue
 		}
 
 		if def := field.Tag.Get("default"); def != "" {
-			values[path+mapper.Field(field.Name)] = def
+			values[path+toScreamingSnake(field.Name)] = def
 		}
 	}
 	return values
 }
 
 type fileProvider struct {
-	path   string
-	mapper KeyMapper
+	path string
 }
 
 func File(path string) Provider {
 	absPath, _ := filepath.Abs(path)
-	return &fileProvider{path: absPath, mapper: defaultMapper}
+	return &fileProvider{path: absPath}
 }
 
 func (p *fileProvider) Values() (map[string]any, error) {
@@ -130,14 +118,8 @@ func (p *fileProvider) Values() (map[string]any, error) {
 	}
 
 	values := make(map[string]any)
-	flattenMap("", raw, values, p.mapper)
+	flattenMap("", raw, values)
 	return values, nil
-}
-
-func (p *fileProvider) setMapper(mapper KeyMapper) {
-	if mapper != nil {
-		p.mapper = mapper
-	}
 }
 
 func parseDotEnv(data []byte) (map[string]string, error) {
@@ -168,16 +150,16 @@ func parseDotEnv(data []byte) (map[string]string, error) {
 	return values, nil
 }
 
-func flattenMap(prefix string, m map[string]any, out map[string]any, mapper KeyMapper) {
+func flattenMap(prefix string, m map[string]any, out map[string]any) {
 	for k, v := range m {
-		key := mapper.Field(k)
+		key := toScreamingSnake(k)
 		if prefix != "" {
 			key = prefix + "_" + key
 		}
 
 		switch val := v.(type) {
 		case map[string]any:
-			flattenMap(key, val, out, mapper)
+			flattenMap(key, val, out)
 		case []any:
 
 			out[key] = val
