@@ -121,6 +121,78 @@ go run main.go
 
 ## 📖 Documentation
 
+## ✅ Common Recipes
+
+### 1) Defaults + .env + Environment (most common)
+
+```go
+type Config struct {
+    Port        int    `default:"8080"`
+    DatabaseURL string `required:"true"`
+}
+
+cfg := envx.MustLoadFromEnv[Config]()
+```
+
+### 2) JSON file + Environment
+
+```go
+type Config struct {
+    Port int `default:"8080"`
+}
+
+cfg := envx.MustLoad[Config](
+    envx.WithProvider(envx.File("config.json")),
+    envx.WithProvider(envx.Env()), // env overrides JSON
+)
+```
+
+### 3) Prefix for Multi-App Envs
+
+```go
+type Config struct {
+    Port int `default:"8080"`
+}
+
+cfg := envx.MustLoad[Config](
+    envx.WithPrefix("API"),
+)
+// reads API_PORT, API_DATABASE_URL, etc.
+```
+
+### 4) Validation (type-safe)
+
+```go
+type Config struct {
+    Port int `default:"8080"`
+}
+
+cfg := envx.MustLoad[Config](
+    envx.WithValidator(func(cfg *Config) error {
+        if cfg.Port < 1024 {
+            return fmt.Errorf("port must be >= 1024")
+        }
+        return nil
+    }),
+)
+```
+
+### 5) Hot Reload
+
+```go
+loader := envx.NewLoader[Config](
+    envx.WithProvider(envx.File("config.json")),
+    envx.WithWatch("config.json", 5*time.Second),
+    envx.WithOnReload(func(old *Config, new *Config) {
+        log.Printf("reloaded: %d -> %d", old.Port, new.Port)
+    }),
+)
+
+cfg := loader.MustLoad()
+_ = loader.StartWatching()
+defer loader.StopWatching()
+```
+
 ### Struct Tags
 
 | Tag | Description | Example |
