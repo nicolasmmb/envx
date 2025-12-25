@@ -21,13 +21,16 @@ func loadInternal[T any](opts ...Option) (map[string]any, *T, error) {
 
 	if len(o.providers) == 0 {
 		o.providers = []Provider{
-			Defaults[T](),
+			DefaultsWithPrefix[T](o.prefix),
 			Env(),
 		}
 	}
 
 	values := make(map[string]any)
 	for _, p := range o.providers {
+		if pa, ok := p.(interface{ setPrefix(string) }); ok {
+			pa.setPrefix(o.prefix)
+		}
 		v, err := p.Values()
 		if err != nil {
 			return nil, nil, err

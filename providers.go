@@ -26,10 +26,20 @@ func (p *envProvider) Values() (map[string]any, error) {
 	return values, nil
 }
 
-type defaultsProvider[T any] struct{}
+type defaultsProvider[T any] struct {
+	prefix string
+}
 
 func Defaults[T any]() Provider {
-	return &defaultsProvider[T]{}
+	return DefaultsWithPrefix[T]("")
+}
+
+func DefaultsWithPrefix[T any](prefix string) Provider {
+	return &defaultsProvider[T]{prefix: strings.ToUpper(prefix)}
+}
+
+func (p *defaultsProvider[T]) setPrefix(prefix string) {
+	p.prefix = strings.ToUpper(prefix)
 }
 
 func (p *defaultsProvider[T]) Values() (map[string]any, error) {
@@ -43,6 +53,9 @@ func (p *defaultsProvider[T]) Values() (map[string]any, error) {
 	values := make(map[string]any)
 	for k, v := range strDefaults {
 		values[k] = v
+		if p.prefix != "" {
+			values[p.prefix+"_"+k] = v
+		}
 	}
 	return values, nil
 }
