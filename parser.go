@@ -46,9 +46,6 @@ func parseStruct(v reflect.Value, t reflect.Type, path string, values map[string
 		}
 
 		val, ok := values[key]
-		if !ok && prefix != "" {
-			val, ok = values[path+toScreamingSnake(field.Name)]
-		}
 		if !ok || val == nil {
 			continue
 		}
