@@ -102,7 +102,7 @@ type Config struct {
 }
 
 func main() {
-    cfg, err := envx.Load[Config]()
+    cfg, err := envx.LoadFromEnv[Config]() // defaults + .env + environment
     if err != nil {
         panic(err)
     }
@@ -182,12 +182,12 @@ cfg, _ := envx.Load[Config](
 ### Multiple Sources
 
 ```go
-cfg, _ := envx.Load[Config](
-    envx.WithProvider(envx.Defaults[Config]()), // 1️⃣ Defaults
-    envx.WithProvider(envx.File("config.json")), // 2️⃣ File
-    envx.WithProvider(envx.Env()),               // 3️⃣ Environment
+cfg, _ := envx.LoadFromEnv[Config](            // Defaults + .env + environment
+    envx.WithProvider(envx.File("config.json")), // optional file
 )
 ```
+
+> `LoadFromEnv` gives you a conventional stack: struct defaults → `.env` → environment (highest priority).
 
 ### Custom Validation
 
@@ -208,8 +208,8 @@ cfg, err := envx.Load[Config](
 loader := envx.NewLoader[Config](
     envx.WithProvider(envx.File("config.json")),
     envx.WithWatch("config.json", 5*time.Second),
-    envx.WithOnReload(func() {
-        log.Println("⚡ Config reloaded!")
+    envx.WithOnReload(func(old *Config, new *Config) {
+        log.Printf("⚡ Config reloaded: %d -> %d", old.Port, new.Port)
     }),
 )
 
@@ -398,9 +398,9 @@ See `example/full/main.go`:
 ```go
 loader := envx.NewLoader[Config](
     envx.WithPrefix("APP"),                       // strict prefix
-    envx.WithProvider(envx.Defaults[Config]()),  // defaults (auto-prefixed)
-    envx.WithProvider(envx.File("config.json")), // optional JSON/.env
-    envx.WithProvider(envx.Env()),               // environment
+    envx.WithProvider(envx.DefaultsWithPrefix[Config]("APP")), // defaults (auto-prefixed)
+    envx.WithProvider(envx.File("config.json")),                // optional JSON/.env
+    envx.WithProvider(envx.Env()),                              // environment
     envx.WithValidator(func(cfg *Config) error { // type-safe validator
         if cfg.App.Port < 1024 {
             return fmt.Errorf("APP_PORT must be >= 1024")
@@ -440,6 +440,8 @@ APP_DATABASE_URL=postgres://db/prod go run ./example/full
 ```go
 cfg, err := envx.Load[T](opts...)    // Load with error
 cfg := envx.MustLoad[T](opts...)      // Load or panic
+cfg, err := envx.LoadFromEnv[T](opts...) // Defaults + .env + environment
+cfg := envx.MustLoadFromEnv[T](opts...)  // Panic version
 ```
 
 > ℹ️ `T` must be a struct type; passing primitives or pointer types returns `ErrUnsupportedType`.
@@ -453,7 +455,8 @@ envx.WithValidator(fn)         // Custom validator (type-safe)
 envx.WithWatch(path, interval) // File watching
 envx.WithOnReload(fn)          // Reload callback
 envx.WithOnReloadError(fn)     // Reload error callback
-envx.WithOutput(w)             // Print writer
+envx.WithLogger(logger)        // Custom logger (implements Printf)
+envx.WithOutput(w)             // Convenience to log to a writer
 envx.WithKeyMapper(mapper)     // Custom key mapping (field -> env key)
 ```
 
@@ -464,7 +467,7 @@ envx.WithKeyMapper(mapper)     // Custom key mapping (field -> env key)
 ```go
 envx.Defaults[T]()             // Struct tag defaults
 envx.Env()                     // Environment variables
-envx.File(path)                // JSON file
+envx.File(path)                // JSON or .env file
 envx.Map(m)                    // String map
 ```
 

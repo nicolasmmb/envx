@@ -37,6 +37,7 @@ func main() {
 	loader := envx.NewLoader[Config](
 		envx.WithLogger(logger),
 		envx.WithPrefix("APP"),
+		envx.WithProvider(envx.DefaultsWithPrefix[Config]("APP")),
 		envx.WithProvider(envx.File("config.json")), // optional JSON/.env file
 		envx.WithProvider(envx.Env()),               // environment
 		envx.WithValidator(func(cfg *Config) error {

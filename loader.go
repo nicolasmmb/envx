@@ -13,6 +13,17 @@ func Load[T any](opts ...Option) (*T, error) {
 	return cfg, err
 }
 
+func LoadFromEnv[T any](opts ...Option) (*T, error) {
+	withEnv := func(o *options) {
+		o.providers = append([]Provider{
+			DefaultsWithPrefix[T](o.prefix),
+			File(".env"),
+			Env(),
+		}, o.providers...)
+	}
+	return Load[T](append(opts, withEnv)...)
+}
+
 func loadInternal[T any](opts ...Option) (map[string]any, *T, error) {
 	o := prepareOptions[T](opts)
 
@@ -136,6 +147,14 @@ func wrapValidationError(err error) error {
 
 func MustLoad[T any](opts ...Option) *T {
 	cfg, err := Load[T](opts...)
+	if err != nil {
+		panic(err)
+	}
+	return cfg
+}
+
+func MustLoadFromEnv[T any](opts ...Option) *T {
+	cfg, err := LoadFromEnv[T](opts...)
 	if err != nil {
 		panic(err)
 	}

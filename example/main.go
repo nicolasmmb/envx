@@ -21,9 +21,7 @@ type Config struct {
 }
 
 func main() {
-	cfg, err := envx.Load[Config](
-		envx.WithProvider(envx.File(".env")), // optional local overrides
-	)
+	cfg, err := envx.LoadFromEnv[Config]() // defaults + .env + env vars
 	if err != nil {
 		log.Fatal(err)
 	}
