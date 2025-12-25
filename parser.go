@@ -10,9 +10,17 @@ import (
 )
 
 func parse(cfg any, values map[string]any, prefix string) error {
-	v := reflect.ValueOf(cfg).Elem()
-	t := v.Type()
-	return parseStruct(v, t, "", values, prefix)
+	rv := reflect.ValueOf(cfg)
+	if rv.Kind() != reflect.Pointer || rv.IsNil() {
+		return &Error{Field: "config", Err: fmt.Errorf("%w: target must be a non-nil pointer to a struct", ErrUnsupportedType)}
+	}
+
+	v := rv.Elem()
+	if v.Kind() != reflect.Struct {
+		return &Error{Field: "config", Err: fmt.Errorf("%w: target must point to a struct, got %s", ErrUnsupportedType, v.Kind())}
+	}
+
+	return parseStruct(v, v.Type(), "", values, prefix)
 }
 
 func parseStruct(v reflect.Value, t reflect.Type, path string, values map[string]any, prefix string) error {
@@ -79,24 +87,10 @@ func checkRequired(v reflect.Value, t reflect.Type, path string) error {
 }
 
 func isZero(v reflect.Value) bool {
-	switch v.Kind() {
-	case reflect.String:
-		return v.String() == ""
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return v.Int() == 0
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return v.Uint() == 0
-	case reflect.Float32, reflect.Float64:
-		return v.Float() == 0
-	case reflect.Bool:
-		return !v.Bool()
-	case reflect.Slice, reflect.Map:
-		return v.Len() == 0
-	case reflect.Ptr, reflect.Interface:
-		return v.IsNil()
-	default:
-		return false
+	if !v.IsValid() {
+		return true
 	}
+	return v.IsZero()
 }
 
 func setField(fv reflect.Value, val any) error {
