@@ -101,10 +101,7 @@ func (p *fileProvider) Values() (map[string]any, error) {
 
 	ext := strings.ToLower(filepath.Ext(p.path))
 	if ext == ".env" {
-		strMap, err := parseDotEnv(data)
-		if err != nil {
-			return nil, err
-		}
+		strMap := parseDotEnv(data)
 		values := make(map[string]any)
 		for k, v := range strMap {
 			values[k] = v
@@ -122,7 +119,7 @@ func (p *fileProvider) Values() (map[string]any, error) {
 	return values, nil
 }
 
-func parseDotEnv(data []byte) (map[string]string, error) {
+func parseDotEnv(data []byte) map[string]string {
 	values := make(map[string]string)
 	lines := strings.Split(string(data), "\n")
 
@@ -147,7 +144,7 @@ func parseDotEnv(data []byte) (map[string]string, error) {
 
 		values[key] = val
 	}
-	return values, nil
+	return values
 }
 
 func flattenMap(prefix string, m map[string]any, out map[string]any) {

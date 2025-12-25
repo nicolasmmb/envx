@@ -3,8 +3,12 @@ package envx
 import (
 	"bytes"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -15,6 +19,14 @@ type failingProvider struct{}
 
 func (f failingProvider) Values() (map[string]any, error) {
 	return nil, errors.New("boom")
+}
+
+type typeValidatedConfig struct {
+	Port int `default:"8080"`
+}
+
+func (t typeValidatedConfig) Validate() error {
+	return errors.New("invalid")
 }
 
 type lockedBuffer struct {
@@ -327,15 +339,15 @@ func TestLoader_ReloadErrorIsLogged(t *testing.T) {
 
 	loader := NewLoader[Config](
 		WithWatch(tmpfile, 10*time.Millisecond),
-	WithProvider(File(tmpfile)),
-	WithProvider(Defaults[Config]()),
-	WithProvider(tp),
-	WithOutput(&buf),
-	WithOnReloadError(func(err error) {
-		buf.Write([]byte("ERR:"))
-		buf.Write([]byte(err.Error()))
-	}),
-)
+		WithProvider(File(tmpfile)),
+		WithProvider(Defaults[Config]()),
+		WithProvider(tp),
+		WithOutput(&buf),
+		WithOnReloadError(func(err error) {
+			buf.Write([]byte("ERR:"))
+			buf.Write([]byte(err.Error()))
+		}),
+	)
 
 	loader.MustLoad()
 	if err := loader.StartWatching(); err != nil {
@@ -637,4 +649,740 @@ func TestLoader_StartWatchingFailsInitialLoad(t *testing.T) {
 	if loader.Get() != nil {
 		t.Fatalf("expected config to stay nil after failed load, got %#v", loader.Get())
 	}
+}
+
+type testLogger struct {
+	msgs []string
+}
+
+func (l *testLogger) Printf(format string, args ...any) {
+	l.msgs = append(l.msgs, fmt.Sprintf(format, args...))
+}
+
+func TestLoadFromEnv_UsesDotEnvAndEnvOverride(t *testing.T) {
+	dir := t.TempDir()
+	oldwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	defer func() {
+		if chErr := os.Chdir(oldwd); chErr != nil {
+			t.Fatalf("restore cwd: %v", chErr)
+		}
+	}()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	if err := os.WriteFile(".env", []byte("PORT=5000\nHOST=dotenv\n"), 0644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+	t.Setenv("PORT", "6000")
+
+	type Config struct {
+		Port int    `default:"7000"`
+		Host string `default:"default"`
+	}
+
+	cfg, err := LoadFromEnv[Config]()
+	if err != nil {
+		t.Fatalf("LoadFromEnv: %v", err)
+	}
+	if cfg.Port != 6000 {
+		t.Fatalf("expected env override port 6000, got %d", cfg.Port)
+	}
+	if cfg.Host != "dotenv" {
+		t.Fatalf("expected dotenv host, got %q", cfg.Host)
+	}
+}
+
+func TestMustLoadFromEnv(t *testing.T) {
+	dir := t.TempDir()
+	oldwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	defer func() {
+		if chErr := os.Chdir(oldwd); chErr != nil {
+			t.Fatalf("restore cwd: %v", chErr)
+		}
+	}()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	if err := os.WriteFile(".env", []byte("PORT=5050\n"), 0644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+
+	type Config struct {
+		Port int `default:"7000"`
+	}
+
+	cfg := MustLoadFromEnv[Config]()
+	if cfg.Port != 5050 {
+		t.Fatalf("expected port from dotenv, got %d", cfg.Port)
+	}
+}
+
+func TestLoaderVersion(t *testing.T) {
+	type Config struct {
+		Port int `default:"8080"`
+	}
+
+	loader := NewLoader[Config]()
+	if loader.Version() != 0 {
+		t.Fatalf("expected version 0 before load, got %d", loader.Version())
+	}
+
+	loader.MustLoad()
+	if loader.Version() != 1 {
+		t.Fatalf("expected version 1 after load, got %d", loader.Version())
+	}
+}
+
+func TestApplyPrefixForMapProvider(t *testing.T) {
+	type Config struct {
+		Port int
+	}
+
+	cfg, err := Load[Config](
+		WithPrefix("APP"),
+		WithProvider(Map(map[string]string{"PORT": "8081"})),
+	)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Port != 8081 {
+		t.Fatalf("expected prefixed port 8081, got %d", cfg.Port)
+	}
+}
+
+func TestWithLogger(t *testing.T) {
+	tmpfile := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(tmpfile, []byte(`{"port": 8080}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	type Config struct {
+		Port int
+	}
+
+	logger := &testLogger{}
+	loader := NewLoader[Config](
+		WithLogger(logger),
+		WithProvider(File(tmpfile)),
+		WithWatch(tmpfile, 0),
+	)
+	loader.MustLoad()
+
+	if err := loader.StartWatching(); err == nil {
+		t.Fatal("expected error for non-positive watch interval")
+	}
+	if len(logger.msgs) == 0 {
+		t.Fatal("expected logger to be called")
+	}
+}
+
+func TestPrintUsesStdout(t *testing.T) {
+	type Config struct {
+		Port int `default:"8080"`
+	}
+	cfg := &Config{Port: 8080}
+
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+	Print(cfg)
+	_ = w.Close()
+	os.Stdout = old
+
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !bytes.Contains(out, []byte("PORT")) {
+		t.Fatalf("expected output to include PORT, got %q", string(out))
+	}
+}
+
+func TestParserCoversUintFloatDurationAndSlices(t *testing.T) {
+	type Config struct {
+		Rate  float64
+		Limit uint
+		Tags  []string
+	}
+
+	cfg, err := Load[Config](
+		WithProvider(Map(map[string]string{
+			"RATE":  "3.5",
+			"LIMIT": "42",
+			"TAGS":  "a,\"b,c\"",
+		})),
+	)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Rate != 3.5 {
+		t.Fatalf("expected rate 3.5, got %v", cfg.Rate)
+	}
+	if cfg.Limit != 42 {
+		t.Fatalf("expected limit 42, got %d", cfg.Limit)
+	}
+	if len(cfg.Tags) != 2 || cfg.Tags[1] != "b,c" {
+		t.Fatalf("unexpected tags: %#v", cfg.Tags)
+	}
+
+	var d time.Duration
+	fv := reflect.ValueOf(&d).Elem()
+	if err := setDuration(fv, int64(10)); err != nil {
+		t.Fatalf("setDuration int64: %v", err)
+	}
+	if err := setDuration(fv, float64(20)); err != nil {
+		t.Fatalf("setDuration float64: %v", err)
+	}
+
+	var i int
+	iv := reflect.ValueOf(&i).Elem()
+	if err := setIntValue(iv, int32(7)); err != nil {
+		t.Fatalf("setIntValue int32: %v", err)
+	}
+
+	var b bool
+	bv := reflect.ValueOf(&b).Elem()
+	if err := setBoolValue(bv, true); err != nil {
+		t.Fatalf("setBoolValue bool: %v", err)
+	}
+
+	if err := setFloatValue(reflect.ValueOf(&cfg.Rate).Elem(), float64(9.5)); err != nil {
+		t.Fatalf("setFloatValue float64: %v", err)
+	}
+
+	if _, err := normalizeSliceInput(123); err == nil {
+		t.Fatal("expected normalizeSliceInput to fail for non-string slice source")
+	}
+}
+
+func TestUtilityCoverage(t *testing.T) {
+	if maskSecretValue("short") != "***" {
+		t.Fatal("expected short secret to be masked")
+	}
+	if !strings.Contains(maskSecretValue("supersecretvalue"), "***") {
+		t.Fatal("expected long secret to be masked")
+	}
+
+	errStr := (&Error{Field: "field", Err: ErrRequired}).Error()
+	if !strings.Contains(errStr, "field") {
+		t.Fatalf("unexpected error string: %s", errStr)
+	}
+
+	if isZero(reflect.ValueOf(1)) {
+		t.Fatal("expected non-zero value to be false for isZero")
+	}
+
+	provider := Map(map[string]string{})
+	if mp, ok := provider.(*mapProvider); ok {
+		if mp.PrefixAware() {
+			t.Fatal("expected mapProvider to be not prefix-aware")
+		}
+	} else {
+		t.Fatal("expected mapProvider type")
+	}
+
+	out := make(map[string]any)
+	flattenMap("", map[string]any{
+		"app": map[string]any{
+			"ports": []any{"1", "2"},
+			"name":  "svc",
+		},
+	}, out)
+	if _, ok := out["APP_PORTS"]; !ok {
+		t.Fatalf("expected APP_PORTS in flattened map, got %#v", out)
+	}
+
+	parts := splitCSV(`a,"b`)
+	if len(parts) != 2 || parts[1] != "\"b" {
+		t.Fatalf("expected split fallback, got %#v", parts)
+	}
+}
+
+func TestMoreCoverageBranches(t *testing.T) {
+	var u uint
+	uv := reflect.ValueOf(&u).Elem()
+	if err := setUintValue(uv, float64(9)); err != nil {
+		t.Fatalf("setUintValue float64: %v", err)
+	}
+	if err := setUintValue(uv, uint32(7)); err != nil {
+		t.Fatalf("setUintValue uint32: %v", err)
+	}
+	if err := setUintValue(uv, "11"); err != nil {
+		t.Fatalf("setUintValue string: %v", err)
+	}
+	if err := setUintValue(uv, "bad"); err == nil {
+		t.Fatal("expected setUintValue string parse error")
+	}
+	if err := setUintValue(uv, true); err == nil {
+		t.Fatal("expected setUintValue default error")
+	}
+
+	var f float64
+	if err := setFloatValue(reflect.ValueOf(&f).Elem(), "2.5"); err != nil {
+		t.Fatalf("setFloatValue string: %v", err)
+	}
+	if err := setFloatValue(reflect.ValueOf(&f).Elem(), "bad"); err == nil {
+		t.Fatal("expected setFloatValue parse error")
+	}
+	if err := setFloatValue(reflect.ValueOf(&f).Elem(), 1); err == nil {
+		t.Fatal("expected setFloatValue default error")
+	}
+
+	var d time.Duration
+	if err := setDuration(reflect.ValueOf(&d).Elem(), "5s"); err != nil {
+		t.Fatalf("setDuration string: %v", err)
+	}
+	if err := setDuration(reflect.ValueOf(&d).Elem(), "bad"); err == nil {
+		t.Fatal("expected setDuration parse error")
+	}
+	if err := setDuration(reflect.ValueOf(&d).Elem(), 1); err == nil {
+		t.Fatal("expected setDuration default error")
+	}
+
+	var i int
+	if err := setIntValue(reflect.ValueOf(&i).Elem(), float64(3)); err != nil {
+		t.Fatalf("setIntValue float64: %v", err)
+	}
+	if err := setIntValue(reflect.ValueOf(&i).Elem(), "bad"); err == nil {
+		t.Fatal("expected setIntValue parse error")
+	}
+	if err := setIntValue(reflect.ValueOf(&i).Elem(), true); err == nil {
+		t.Fatal("expected setIntValue default error")
+	}
+
+	var b bool
+	if err := setBoolValue(reflect.ValueOf(&b).Elem(), "true"); err != nil {
+		t.Fatalf("setBoolValue string: %v", err)
+	}
+	if err := setBoolValue(reflect.ValueOf(&b).Elem(), "notabool"); err == nil {
+		t.Fatal("expected setBoolValue parse error")
+	}
+	if err := setBoolValue(reflect.ValueOf(&b).Elem(), 1); err == nil {
+		t.Fatal("expected setBoolValue default error")
+	}
+
+	if _, err := normalizeSliceInput([]any{"a", "b"}); err != nil {
+		t.Fatalf("normalizeSliceInput slice: %v", err)
+	}
+
+	if got := applyPrefix(map[string]any{"A": 1}, ""); got["A"] != 1 {
+		t.Fatal("expected applyPrefix to return input map when prefix empty")
+	}
+
+	if isZero(reflect.Value{}) != true {
+		t.Fatal("expected zero reflect.Value to be zero")
+	}
+
+	if err := wrapValidationError(nil); err != nil {
+		t.Fatal("expected wrapValidationError nil to return nil")
+	}
+
+	logger := newWriterLogger(nil)
+	logger.Printf("test")
+	_ = newWriterLogger(&bytes.Buffer{})
+
+	type Config struct {
+		Port   int
+		hidden string
+	}
+
+	values := map[string]any{"PORT": "8080", "HIDDEN": "ignored"}
+	cfg := &Config{}
+	if err := parse(cfg, values, ""); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cfg.Port != 8080 {
+		t.Fatalf("expected port to be set, got %d", cfg.Port)
+	}
+	if cfg.hidden != "" {
+		t.Fatalf("expected hidden field to remain empty, got %q", cfg.hidden)
+	}
+
+	if err := parse(123, values, ""); err == nil {
+		t.Fatal("expected parse to fail on non-pointer target")
+	}
+
+	var nilCfg *Config
+	if err := parse(nilCfg, values, ""); err == nil {
+		t.Fatal("expected parse to fail on nil pointer")
+	}
+
+	var notStruct int
+	if err := parse(&notStruct, values, ""); err == nil {
+		t.Fatal("expected parse to fail on non-struct pointer")
+	}
+
+	if err := setField(reflect.ValueOf(&struct{ C complex64 }{}).Elem().Field(0), complex64(1)); err == nil {
+		t.Fatal("expected setField to fail for unsupported kind")
+	}
+
+	var sliceHolder []string
+	if err := setField(reflect.ValueOf(&sliceHolder).Elem(), []any{"a", "b"}); err != nil {
+		t.Fatalf("setField slice []any: %v", err)
+	}
+	if err := setField(reflect.ValueOf(&sliceHolder).Elem(), 123); err == nil {
+		t.Fatal("expected setField to fail for unsupported slice source type")
+	}
+
+	if _, err := resolveStructType[int](); err == nil {
+		t.Fatal("expected resolveStructType to fail for non-struct type")
+	}
+	if _, err := resolveStructType[*Config](); err != nil {
+		t.Fatalf("expected resolveStructType to succeed for pointer type: %v", err)
+	}
+
+	tmpfile := filepath.Join(t.TempDir(), "bad.json")
+	if err := os.WriteFile(tmpfile, []byte(`{"port":`), 0644); err != nil {
+		t.Fatalf("write bad json: %v", err)
+	}
+	provider := File(tmpfile)
+	if _, err := provider.Values(); err == nil {
+		t.Fatal("expected file provider to fail on invalid json")
+	}
+
+	missing := File(filepath.Join(t.TempDir(), "missing.json"))
+	if vals, err := missing.Values(); err != nil || vals != nil {
+		t.Fatalf("expected missing file to return nil, got vals=%v err=%v", vals, err)
+	}
+
+	dotenv := File(filepath.Join(t.TempDir(), ".env"))
+	if err := os.WriteFile(dotenv.(*fileProvider).path, []byte("KEY=\"value\""), 0644); err != nil {
+		t.Fatalf("write dotenv: %v", err)
+	}
+	if vals, err := dotenv.Values(); err != nil || vals["KEY"] != "value" {
+		t.Fatalf("expected dotenv value, got vals=%v err=%v", vals, err)
+	}
+
+	opt := WithValidator(func(cfg *Config) error { return nil })
+	o := &options{}
+	opt(o)
+	if err := o.validator(cfg); err != nil {
+		t.Fatalf("expected validator to succeed, got %v", err)
+	}
+	if err := o.validator(&struct{}{}); err == nil {
+		t.Fatal("expected validator type mismatch error")
+	}
+}
+
+func TestMustLoadFromEnvPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected MustLoadFromEnv to panic on invalid type")
+		}
+	}()
+	_ = MustLoadFromEnv[int]()
+}
+
+func TestLoaderMustLoadPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected Loader.MustLoad to panic on provider error")
+		}
+	}()
+
+	type Config struct {
+		Port int
+	}
+
+	loader := NewLoader[Config](WithProvider(failingProvider{}))
+	_ = loader.MustLoad()
+}
+
+func TestPrintStructNested(t *testing.T) {
+	type Nested struct {
+		Name string `default:"svc"`
+	}
+	type Config struct {
+		App  Nested
+		Time time.Time
+	}
+
+	cfg := &Config{App: Nested{Name: "api"}, Time: time.Now()}
+	var buf bytes.Buffer
+	PrintTo(&buf, cfg)
+	if !strings.Contains(buf.String(), "App:") {
+		t.Fatalf("expected nested struct to be printed, got %q", buf.String())
+	}
+}
+
+func TestParseStructPrefixAndRequired(t *testing.T) {
+	type Config struct {
+		Port int `required:"true"`
+	}
+
+	cfg := &Config{}
+	values := map[string]any{"APP_PORT": "8088"}
+	if err := parse(cfg, values, "APP"); err != nil {
+		t.Fatalf("parse with prefix: %v", err)
+	}
+	if cfg.Port != 8088 {
+		t.Fatalf("expected port 8088, got %d", cfg.Port)
+	}
+
+	cfg = &Config{}
+	if err := validateRequired(cfg); err == nil {
+		t.Fatal("expected required validation error")
+	}
+}
+
+func TestParseStructNestedAndNilValue(t *testing.T) {
+	type Nested struct {
+		Name string
+	}
+	type Config struct {
+		Port int
+		Nest Nested
+	}
+
+	cfg := &Config{}
+	values := map[string]any{
+		"PORT":      nil,
+		"NEST_NAME": "svc",
+	}
+	if err := parse(cfg, values, ""); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cfg.Nest.Name != "svc" {
+		t.Fatalf("expected nested name to be set, got %q", cfg.Nest.Name)
+	}
+	if cfg.Port != 0 {
+		t.Fatalf("expected port to remain zero, got %d", cfg.Port)
+	}
+}
+
+func TestValidateRequiredNested(t *testing.T) {
+	type Config struct {
+		Nest struct {
+			Token string `required:"true"`
+		}
+	}
+
+	cfg := &Config{}
+	if err := validateRequired(cfg); err == nil {
+		t.Fatal("expected required error for nested field")
+	}
+	cfg.Nest.Token = "ok"
+	if err := validateRequired(cfg); err != nil {
+		t.Fatalf("expected no error for nested required, got %v", err)
+	}
+}
+
+func TestReloadConfigBranches(t *testing.T) {
+	type Config struct {
+		Port int `default:"8080"`
+	}
+
+	loader := NewLoader[Config](WithProvider(Defaults[Config]()))
+	loader.MustLoad()
+
+	loader.opts = []Option{WithProvider(Defaults[Config]())}
+	o := defaultOptions()
+	finalizeOptions[Config](o)
+	loader.reloadConfig(o)
+
+	loader.opts = []Option{WithProvider(failingProvider{})}
+	loader.reloadConfig(o)
+}
+
+func TestSetFieldSliceInvalidCSV(t *testing.T) {
+	var sliceHolder []string
+	if err := setField(reflect.ValueOf(&sliceHolder).Elem(), `a,"b`); err != nil {
+		t.Fatalf("setField invalid csv fallback: %v", err)
+	}
+	if len(sliceHolder) != 2 {
+		t.Fatalf("expected 2 items from fallback, got %#v", sliceHolder)
+	}
+}
+
+func TestFileProviderReadError(t *testing.T) {
+	dir := t.TempDir()
+	provider := File(dir)
+	if _, err := provider.Values(); err == nil {
+		t.Fatal("expected error when reading directory as file")
+	}
+}
+
+func TestStartWatchingNoPathAndTwice(t *testing.T) {
+	type Config struct {
+		Port int `default:"8080"`
+	}
+
+	loader := NewLoader[Config]()
+	if err := loader.StartWatching(); err != nil {
+		t.Fatalf("expected nil for empty watch path, got %v", err)
+	}
+
+	tmpfile := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(tmpfile, []byte(`{"port": 8080}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	loader = NewLoader[Config](WithProvider(File(tmpfile)), WithWatch(tmpfile, 10*time.Millisecond))
+	loader.MustLoad()
+	if err := loader.StartWatching(); err != nil {
+		t.Fatalf("start watching: %v", err)
+	}
+	defer loader.StopWatching()
+	if err := loader.StartWatching(); err != nil {
+		t.Fatalf("expected second StartWatching to be nil, got %v", err)
+	}
+}
+
+func TestLoadInternalProviderError(t *testing.T) {
+	type Config struct {
+		Port int
+	}
+
+	if _, err := Load[Config](WithProvider(failingProvider{})); err == nil {
+		t.Fatal("expected Load to return provider error")
+	}
+}
+
+func TestLoadInternalErrors(t *testing.T) {
+	type BadConfig struct {
+		Value complex64
+	}
+
+	if _, err := Load[BadConfig](WithProvider(Map(map[string]string{"VALUE": "1"}))); err == nil {
+		t.Fatal("expected parse error for unsupported type")
+	}
+
+	type Validated struct {
+		Port int `default:"8080"`
+	}
+
+	if _, err := Load[Validated](
+		WithProvider(Defaults[Validated]()),
+		WithValidator(func(cfg *Validated) error { return errors.New("invalid") }),
+	); err == nil {
+		t.Fatal("expected option validator error")
+	}
+
+	if _, err := Load[typeValidatedConfig](WithProvider(Defaults[typeValidatedConfig]())); err == nil {
+		t.Fatal("expected type validator error")
+	}
+}
+
+func TestParseStructNonSettable(t *testing.T) {
+	type Config struct {
+		Port int
+	}
+
+	v := reflect.ValueOf(Config{})
+	if err := parseStruct(v, v.Type(), "", map[string]any{"PORT": "8080"}, ""); err != nil {
+		t.Fatalf("parseStruct non-settable: %v", err)
+	}
+}
+
+func TestParseStructNestedError(t *testing.T) {
+	type Nested struct {
+		Bad complex64
+	}
+	type Config struct {
+		Nest Nested
+	}
+
+	cfg := &Config{}
+	values := map[string]any{"NEST_BAD": "1"}
+	if err := parse(cfg, values, ""); err == nil {
+		t.Fatal("expected parse to fail for nested unsupported type")
+	}
+}
+
+func TestSetFieldDuration(t *testing.T) {
+	var d time.Duration
+	if err := setField(reflect.ValueOf(&d).Elem(), "2s"); err != nil {
+		t.Fatalf("setField duration: %v", err)
+	}
+	if d != 2*time.Second {
+		t.Fatalf("expected 2s duration, got %v", d)
+	}
+}
+
+func TestSetFieldSliceItemError(t *testing.T) {
+	var sliceHolder []int
+	if err := setField(reflect.ValueOf(&sliceHolder).Elem(), []any{map[string]any{"x": 1}}); err == nil {
+		t.Fatal("expected setField to fail for invalid slice item")
+	}
+}
+
+func TestFileProviderValuesJSONSuccess(t *testing.T) {
+	tmpfile := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(tmpfile, []byte(`{"port": 8080, "nested": {"name": "api"}}`), 0644); err != nil {
+		t.Fatalf("write json: %v", err)
+	}
+	provider := File(tmpfile)
+	values, err := provider.Values()
+	if err != nil {
+		t.Fatalf("Values: %v", err)
+	}
+	if values["PORT"] != float64(8080) || values["NESTED_NAME"] != "api" {
+		t.Fatalf("unexpected values: %#v", values)
+	}
+}
+
+func TestFinalizeOptionsLoggerOnly(t *testing.T) {
+	type Config struct{}
+
+	o := &options{providers: []Provider{Env()}}
+	finalizeOptions[Config](o)
+	if o.logger == nil {
+		t.Fatal("expected logger to be set")
+	}
+}
+
+func TestParseDotEnvBranches(t *testing.T) {
+	data := []byte(`
+# comment
+NOEQ
+KEY="value"
+OTHER='x'
+PLAIN=ok
+`)
+	values := parseDotEnv(data)
+	if values["KEY"] != "value" || values["OTHER"] != "x" || values["PLAIN"] != "ok" {
+		t.Fatalf("unexpected dotenv values: %#v", values)
+	}
+}
+
+func TestWatchLoopBranches(t *testing.T) {
+	type Config struct{}
+
+	o := defaultOptions()
+	o.watchEvery = time.Millisecond
+	tmpfile := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(tmpfile, []byte(`{"port": 1}`), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	o.watchPath = tmpfile
+
+	loader := &Loader[Config]{}
+	stop := make(chan struct{})
+	close(stop)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	newWatchLoop(loader, o, os.Stat).run(stop, &wg)
+	wg.Wait()
+
+	stop = make(chan struct{})
+	wg.Add(1)
+	go func() {
+		time.Sleep(5 * time.Millisecond)
+		close(stop)
+	}()
+	errStat := func(string) (os.FileInfo, error) {
+		return nil, os.ErrNotExist
+	}
+	newWatchLoop(loader, o, errStat).run(stop, &wg)
+	wg.Wait()
 }
