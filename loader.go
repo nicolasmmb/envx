@@ -77,6 +77,7 @@ type Loader[T any] struct {
 	config     *T
 	version    int64
 	stop       chan struct{}
+	watchWG    *sync.WaitGroup
 	mu         sync.RWMutex
 	isWatching bool
 	onReload   func(any, any)
@@ -165,6 +166,9 @@ func (l *Loader[T]) StartWatching() error {
 	}
 
 	l.stop = make(chan struct{})
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	l.watchWG = wg
 	stop := l.stop
 	l.isWatching = true
 	var lastMod time.Time
@@ -173,7 +177,8 @@ func (l *Loader[T]) StartWatching() error {
 		lastMod = info.ModTime()
 	}
 
-	go func() {
+	go func(wg *sync.WaitGroup) {
+		defer wg.Done()
 		ticker := time.NewTicker(o.watchEvery)
 		defer ticker.Stop()
 
@@ -213,22 +218,31 @@ func (l *Loader[T]) StartWatching() error {
 				}
 			}
 		}
-	}()
+	}(wg)
 
 	return nil
 }
 
 func (l *Loader[T]) StopWatching() {
 	l.mu.Lock()
-	defer l.mu.Unlock()
-
 	if !l.isWatching {
+		l.mu.Unlock()
 		return
 	}
 
-	if l.stop != nil {
-		close(l.stop)
-		l.stop = nil
-	}
+	stop := l.stop
+	wg := l.watchWG
+
+	l.stop = nil
 	l.isWatching = false
+	l.watchWG = nil
+	l.mu.Unlock()
+
+	if stop != nil {
+		close(stop)
+	}
+
+	if wg != nil {
+		wg.Wait()
+	}
 }
