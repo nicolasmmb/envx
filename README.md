@@ -175,6 +175,8 @@ cfg, _ := envx.Load[Config](
 )
 // Port → MYAPP_PORT
 // DatabaseURL → MYAPP_DATABASE_URL
+
+> Prefix is strict: when set, only prefixed variables are considered (defaults are automatically mapped with the prefix).
 ```
 
 ### Multiple Sources
@@ -191,9 +193,8 @@ cfg, _ := envx.Load[Config](
 
 ```go
 cfg, err := envx.Load[Config](
-    envx.WithValidator(func(cfg any) error {
-        c := cfg.(*Config)
-        if c.Port < 1024 {
+    envx.WithValidator(func(cfg *Config) error {
+        if cfg.Port < 1024 {
             return errors.New("port must be >= 1024")
         }
         return nil
@@ -213,7 +214,9 @@ loader := envx.NewLoader[Config](
 )
 
 cfg := loader.MustLoad()
-loader.StartWatching()
+if err := loader.StartWatching(); err != nil {
+    log.Fatalf("failed to watch config: %v", err)
+}
 defer loader.StopWatching()
 
 // Get latest config anytime
@@ -387,6 +390,47 @@ func loadConfig() *Config {
 
 </details>
 
+<details>
+<summary><b>Full Feature Demo (prefix, validators, watch)</b></summary>
+
+See `example/full/main.go`:
+
+```go
+loader := envx.NewLoader[Config](
+    envx.WithPrefix("APP"),                       // strict prefix
+    envx.WithProvider(envx.Defaults[Config]()),  // defaults (auto-prefixed)
+    envx.WithProvider(envx.File("config.json")), // optional JSON/.env
+    envx.WithProvider(envx.Env()),               // environment
+    envx.WithValidator(func(cfg *Config) error { // type-safe validator
+        if cfg.App.Port < 1024 {
+            return fmt.Errorf("APP_PORT must be >= 1024")
+        }
+        return nil
+    }),
+    envx.WithOnReload(func(old *Config, new *Config) {
+        log.Printf("config reloaded: port %d -> %d", old.App.Port, new.App.Port)
+    }),
+    envx.WithWatch("config.json", 2*time.Second), // hot reload
+)
+
+cfg := loader.MustLoad()
+envx.Print(cfg)
+
+if err := loader.StartWatching(); err != nil {
+    log.Fatalf("failed to watch: %v", err)
+}
+defer loader.StopWatching()
+```
+
+Run it:
+```bash
+APP_DATABASE_URL=postgres://db/prod go run ./example/full
+```
+
+</details>
+
+> ℹ️ When a prefix is set, only prefixed environment variables are read; defaults are auto-prefixed internally so they keep working with `WithPrefix`.
+
 ---
 
 ## 📚 API Reference
@@ -398,16 +442,20 @@ cfg, err := envx.Load[T](opts...)    // Load with error
 cfg := envx.MustLoad[T](opts...)      // Load or panic
 ```
 
+> ℹ️ `T` must be a struct type; passing primitives or pointer types returns `ErrUnsupportedType`.
+
 ### Options
 
 ```go
 envx.WithPrefix(prefix)        // Env var prefix
 envx.WithProvider(p)           // Add provider
-envx.WithValidator(fn)         // Custom validator
+envx.WithValidator(fn)         // Custom validator (type-safe)
 envx.WithWatch(path, interval) // File watching
 envx.WithOnReload(fn)          // Reload callback
 envx.WithOutput(w)             // Print writer
 ```
+
+> 🔁 File watching starts only when the initial load succeeds and the interval is greater than zero.
 
 ### Providers
 
@@ -426,7 +474,7 @@ loader.Load()          // Load config
 loader.MustLoad()      // Load or panic
 loader.Get()           // Get current config
 loader.Version()       // Get version number
-loader.StartWatching() // Start file watcher
+loader.StartWatching() // Start file watcher (returns error)
 loader.StopWatching()  // Stop file watcher
 ```
 

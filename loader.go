@@ -165,6 +165,7 @@ func (l *Loader[T]) StartWatching() error {
 	}
 
 	l.stop = make(chan struct{})
+	stop := l.stop
 	l.isWatching = true
 	var lastMod time.Time
 
@@ -178,7 +179,7 @@ func (l *Loader[T]) StartWatching() error {
 
 		for {
 			select {
-			case <-l.stop:
+			case <-stop:
 				return
 			case <-ticker.C:
 				info, err := os.Stat(o.watchPath)
@@ -192,17 +193,20 @@ func (l *Loader[T]) StartWatching() error {
 					oldConfig := l.config
 					_, newConfig, err := loadInternal[T](l.opts...)
 
-					if err == nil {
+					if err != nil {
+						fmt.Fprintf(o.output, "envx: reload failed: %v\n", err)
+						l.mu.Unlock()
+						continue
+					}
 
-						changed := !reflect.DeepEqual(oldConfig, newConfig)
+					changed := !reflect.DeepEqual(oldConfig, newConfig)
 
-						if changed {
-							l.config = newConfig
-							l.version++
-							if l.onReload != nil {
+					if changed {
+						l.config = newConfig
+						l.version++
+						if l.onReload != nil {
 
-								go l.onReload(oldConfig, newConfig)
-							}
+							go l.onReload(oldConfig, newConfig)
 						}
 					}
 					l.mu.Unlock()

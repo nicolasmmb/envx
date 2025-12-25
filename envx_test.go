@@ -2,12 +2,37 @@ package envx
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+type failingProvider struct{}
+
+func (f failingProvider) Values() (map[string]any, error) {
+	return nil, errors.New("boom")
+}
+
+type lockedBuffer struct {
+	buf bytes.Buffer
+	mu  sync.Mutex
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) Bytes() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Bytes()
+}
 
 func TestLoad_Defaults(t *testing.T) {
 	type Config struct {
@@ -62,6 +87,17 @@ func TestLoad_Env(t *testing.T) {
 	}
 }
 
+func TestLoad_UnsupportedType(t *testing.T) {
+	_, err := Load[int]()
+	if err == nil {
+		t.Fatal("expected error for non-struct config")
+	}
+
+	if !errors.Is(err, ErrUnsupportedType) {
+		t.Fatalf("expected ErrUnsupportedType, got %v", err)
+	}
+}
+
 func TestLoad_Required(t *testing.T) {
 	type Config struct {
 		DatabaseURL string `required:"true"`
@@ -70,6 +106,21 @@ func TestLoad_Required(t *testing.T) {
 	_, err := Load[Config]()
 	if err == nil {
 		t.Fatal("expected error for missing required field")
+	}
+}
+
+func TestLoad_RequiredTime(t *testing.T) {
+	type Config struct {
+		StartedAt time.Time `required:"true"`
+	}
+
+	_, err := Load[Config]()
+	if err == nil {
+		t.Fatal("expected error for missing required time")
+	}
+
+	if !errors.Is(err, ErrRequired) {
+		t.Fatalf("expected ErrRequired, got %v", err)
 	}
 }
 
@@ -217,6 +268,100 @@ func TestLoad_WithPrefix(t *testing.T) {
 	}
 }
 
+func TestLoad_WithPrefix_IgnoresUnprefixed(t *testing.T) {
+	os.Setenv("PORT", "9000")
+	t.Cleanup(func() { os.Unsetenv("PORT") })
+
+	type Config struct {
+		Port int `default:"8080"`
+	}
+
+	cfg, err := Load[Config](WithPrefix("APP"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.Port != 8080 {
+		t.Errorf("Port = %d, want default 8080 when unprefixed env is set", cfg.Port)
+	}
+}
+
+func TestLoad_WithPrefixDefaults(t *testing.T) {
+	type Config struct {
+		Port int `default:"8080"`
+	}
+
+	cfg, err := Load[Config](WithPrefix("APP"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.Port != 8080 {
+		t.Errorf("Port = %d, want default 8080", cfg.Port)
+	}
+}
+
+type togglingProvider struct {
+	fail atomic.Bool
+}
+
+func (p *togglingProvider) Values() (map[string]any, error) {
+	if p.fail.Load() {
+		return nil, errors.New("provider failure")
+	}
+	return map[string]any{}, nil
+}
+
+func TestLoader_ReloadErrorIsLogged(t *testing.T) {
+	tmpfile := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(tmpfile, []byte(`{"port": 8080}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	type Config struct {
+		Port int `default:"8080"`
+	}
+
+	var buf lockedBuffer
+	tp := &togglingProvider{}
+
+	loader := NewLoader[Config](
+		WithWatch(tmpfile, 10*time.Millisecond),
+		WithProvider(File(tmpfile)),
+		WithProvider(Defaults[Config]()),
+		WithProvider(tp),
+		WithOutput(&buf),
+	)
+
+	loader.MustLoad()
+	if err := loader.StartWatching(); err != nil {
+		t.Fatalf("start watching: %v", err)
+	}
+	defer loader.StopWatching()
+
+	// Next reload will fail
+	tp.fail.Store(true)
+
+	// Trigger reload
+	time.Sleep(20 * time.Millisecond)
+	if err := os.WriteFile(tmpfile, []byte(`{"port": 9090}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.After(500 * time.Millisecond)
+	for {
+		if bytes.Contains(buf.Bytes(), []byte("reload failed")) {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("expected reload failure to be logged")
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
 func TestLoad_WithProvider(t *testing.T) {
 	type Config struct {
 		Port int    `default:"8080"`
@@ -248,9 +393,8 @@ func TestLoad_WithValidator(t *testing.T) {
 	}
 
 	_, err := Load[Config](
-		WithValidator(func(cfg any) error {
-			c := cfg.(*Config)
-			if c.Port < 1024 {
+		WithValidator(func(cfg *Config) error {
+			if cfg.Port < 1024 {
 				return ErrValidation
 			}
 			return nil
@@ -365,12 +509,12 @@ func TestLoader_Concurrency(t *testing.T) {
 
 	go func() {
 		defer wg.Done()
-		loader.StartWatching()
+		_ = loader.StartWatching()
 	}()
 
 	go func() {
 		defer wg.Done()
-		loader.StartWatching()
+		_ = loader.StartWatching()
 	}()
 
 	wg.Wait()
@@ -415,7 +559,9 @@ func TestLoader_OnReload(t *testing.T) {
 
 	// Initial load
 	loader.MustLoad()
-	loader.StartWatching()
+	if err := loader.StartWatching(); err != nil {
+		t.Fatalf("start watching: %v", err)
+	}
 	defer loader.StopWatching()
 
 	// Modify file - Change Port
@@ -440,5 +586,51 @@ func TestLoader_OnReload(t *testing.T) {
 
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for reload callback")
+	}
+}
+
+func TestLoader_StartWatchingInvalidInterval(t *testing.T) {
+	tmpfile := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(tmpfile, []byte(`{"port": 8080}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	type Config struct {
+		Port int
+	}
+
+	loader := NewLoader[Config](WithWatch(tmpfile, 0), WithProvider(File(tmpfile)))
+	loader.MustLoad()
+
+	if err := loader.StartWatching(); err == nil {
+		t.Fatal("expected error for non-positive watch interval")
+	}
+
+	if loader.Get().Port != 8080 {
+		t.Fatalf("expected loaded config to remain, got %v", loader.Get())
+	}
+}
+
+func TestLoader_StartWatchingFailsInitialLoad(t *testing.T) {
+	tmpfile := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(tmpfile, []byte(`{"port": 8080}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	type Config struct {
+		Port int
+	}
+
+	loader := NewLoader[Config](
+		WithWatch(tmpfile, 50*time.Millisecond),
+		WithProvider(failingProvider{}),
+	)
+
+	if err := loader.StartWatching(); err == nil {
+		t.Fatal("expected error for failed initial load")
+	}
+
+	if loader.Get() != nil {
+		t.Fatalf("expected config to stay nil after failed load, got %#v", loader.Get())
 	}
 }
