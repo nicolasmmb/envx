@@ -127,12 +127,12 @@ func (l *Loader[T]) Version() int64 {
 	return l.version
 }
 
-func (l *Loader[T]) StartWatching() {
+func (l *Loader[T]) StartWatching() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	if l.isWatching {
-		return
+		return nil
 	}
 
 	o := &options{output: os.Stdout}
@@ -145,19 +145,20 @@ func (l *Loader[T]) StartWatching() {
 	}
 
 	if o.watchPath == "" {
-		return
+		return nil
 	}
 
 	if l.config == nil {
 		if _, err := l.loadLocked(); err != nil {
 			fmt.Fprintf(o.output, "envx: watch load failed: %v\n", err)
-			return
+			return err
 		}
 	}
 
 	if o.watchEvery <= 0 {
-		fmt.Fprintln(o.output, "envx: watch interval must be greater than zero")
-		return
+		err := fmt.Errorf("envx: watch interval must be greater than zero")
+		fmt.Fprintln(o.output, err.Error())
+		return err
 	}
 
 	l.stop = make(chan struct{})
@@ -206,6 +207,8 @@ func (l *Loader[T]) StartWatching() {
 			}
 		}
 	}()
+
+	return nil
 }
 
 func (l *Loader[T]) StopWatching() {
