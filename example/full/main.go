@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"github.com/nicolasmmb/envx"
@@ -31,28 +32,30 @@ type Config struct {
 }
 
 func main() {
+	logger := log.New(os.Stdout, "[config] ", log.LstdFlags)
+
 	loader := envx.NewLoader[Config](
-		envx.WithPrefix("APP"),                      // strict prefix
-		envx.WithProvider(envx.Defaults[Config]()),  // defaults (auto-prefixed)
+		envx.WithLogger(logger),
+		envx.WithPrefix("APP"),
 		envx.WithProvider(envx.File("config.json")), // optional JSON/.env file
 		envx.WithProvider(envx.Env()),               // environment
-		envx.WithValidator(func(cfg *Config) error { // type-safe validator
+		envx.WithValidator(func(cfg *Config) error {
 			if cfg.App.Port < 1024 {
 				return errors.New("APP_PORT must be >= 1024")
 			}
 			return nil
 		}),
 		envx.WithOnReload(func(old *Config, new *Config) {
-			log.Printf("config reloaded: port %d -> %d", old.App.Port, new.App.Port)
+			logger.Printf("config reloaded: port %d -> %d", old.App.Port, new.App.Port)
 		}),
-		envx.WithWatch("config.json", 2*time.Second), // hot reload
+		envx.WithWatch("config.json", 2*time.Second),
 	)
 
 	cfg := loader.MustLoad()
 	envx.Print(cfg)
 
 	if err := loader.StartWatching(); err != nil {
-		log.Fatalf("failed to start watcher: %v", err)
+		logger.Fatalf("failed to start watcher: %v", err)
 	}
 	defer loader.StopWatching()
 

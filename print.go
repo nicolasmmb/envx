@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+var secretMarkers = []string{"SECRET", "PASSWORD", "TOKEN", "KEY"}
+
 func Print[T any](cfg *T) {
 	PrintTo(os.Stdout, cfg)
 }
@@ -38,15 +40,18 @@ func printStruct(w io.Writer, v reflect.Value, t reflect.Type, indent string) {
 		val := fmt.Sprintf("%v", fv.Interface())
 
 		if isSecret(field) && len(val) > 0 {
-			if len(val) > 8 {
-				val = val[:3] + "***" + val[len(val)-3:]
-			} else {
-				val = "***"
-			}
+			val = maskSecretValue(val)
 		}
 
 		fmt.Fprintf(w, "%s%-25s = %s\n", indent, name, val)
 	}
+}
+
+func maskSecretValue(val string) string {
+	if len(val) <= 8 {
+		return "***"
+	}
+	return val[:3] + "***" + val[len(val)-3:]
 }
 
 func isSecret(field reflect.StructField) bool {
@@ -54,8 +59,14 @@ func isSecret(field reflect.StructField) bool {
 		return true
 	}
 	upper := strings.ToUpper(field.Name)
-	return strings.Contains(upper, "SECRET") ||
-		strings.Contains(upper, "PASSWORD") ||
-		strings.Contains(upper, "TOKEN") ||
-		strings.Contains(upper, "KEY")
+	return containsAny(upper, secretMarkers)
+}
+
+func containsAny(s string, markers []string) bool {
+	for _, marker := range markers {
+		if strings.Contains(s, marker) {
+			return true
+		}
+	}
+	return false
 }

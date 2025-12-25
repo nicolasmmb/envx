@@ -452,7 +452,9 @@ envx.WithProvider(p)           // Add provider
 envx.WithValidator(fn)         // Custom validator (type-safe)
 envx.WithWatch(path, interval) // File watching
 envx.WithOnReload(fn)          // Reload callback
+envx.WithOnReloadError(fn)     // Reload error callback
 envx.WithOutput(w)             // Print writer
+envx.WithKeyMapper(mapper)     // Custom key mapping (field -> env key)
 ```
 
 > 🔁 File watching starts only when the initial load succeeds and the interval is greater than zero.

@@ -3,6 +3,7 @@ package envx
 import (
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -11,13 +12,15 @@ import (
 type Option func(*options)
 
 type options struct {
-	providers  []Provider
-	prefix     string
-	output     io.Writer
-	onReload   func(any, any)
-	validator  func(any) error
-	watchPath  string
-	watchEvery time.Duration
+	providers     []Provider
+	prefix        string
+	logger        Logger
+	onReload      func(any, any)
+	onReloadError func(error)
+	validator     func(any) error
+	mapper        KeyMapper
+	watchPath     string
+	watchEvery    time.Duration
 }
 
 func WithProvider(p Provider) Option {
@@ -34,7 +37,13 @@ func WithPrefix(prefix string) Option {
 
 func WithOutput(w io.Writer) Option {
 	return func(o *options) {
-		o.output = w
+		o.logger = newWriterLogger(w)
+	}
+}
+
+func WithLogger(logger Logger) Option {
+	return func(o *options) {
+		o.logger = logger
 	}
 }
 
@@ -47,6 +56,18 @@ func WithOnReload[T any](fn func(old *T, new *T)) Option {
 				fn(oCfg, nCfg)
 			}
 		}
+	}
+}
+
+func WithOnReloadError(fn func(error)) Option {
+	return func(o *options) {
+		o.onReloadError = fn
+	}
+}
+
+func WithKeyMapper(mapper KeyMapper) Option {
+	return func(o *options) {
+		o.mapper = mapper
 	}
 }
 
@@ -66,5 +87,11 @@ func WithWatch(path string, interval time.Duration) Option {
 	return func(o *options) {
 		o.watchPath, _ = filepath.Abs(path)
 		o.watchEvery = interval
+	}
+}
+
+func defaultOptions() *options {
+	return &options{
+		logger: newWriterLogger(os.Stdout),
 	}
 }

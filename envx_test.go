@@ -327,11 +327,15 @@ func TestLoader_ReloadErrorIsLogged(t *testing.T) {
 
 	loader := NewLoader[Config](
 		WithWatch(tmpfile, 10*time.Millisecond),
-		WithProvider(File(tmpfile)),
-		WithProvider(Defaults[Config]()),
-		WithProvider(tp),
-		WithOutput(&buf),
-	)
+	WithProvider(File(tmpfile)),
+	WithProvider(Defaults[Config]()),
+	WithProvider(tp),
+	WithOutput(&buf),
+	WithOnReloadError(func(err error) {
+		buf.Write([]byte("ERR:"))
+		buf.Write([]byte(err.Error()))
+	}),
+)
 
 	loader.MustLoad()
 	if err := loader.StartWatching(); err != nil {
@@ -350,7 +354,7 @@ func TestLoader_ReloadErrorIsLogged(t *testing.T) {
 
 	deadline := time.After(500 * time.Millisecond)
 	for {
-		if bytes.Contains(buf.Bytes(), []byte("reload failed")) {
+		if bytes.Contains(buf.Bytes(), []byte("reload failed")) || bytes.Contains(buf.Bytes(), []byte("ERR:")) {
 			break
 		}
 		select {

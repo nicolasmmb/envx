@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/nicolasmmb/envx"
@@ -20,13 +21,13 @@ type Config struct {
 }
 
 func main() {
-
-	cfg, err := envx.Load[Config]()
+	cfg, err := envx.Load[Config](
+		envx.WithProvider(envx.File(".env")), // optional local overrides
+	)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
 	envx.Print(cfg)
-
 	fmt.Printf("\nServer starting on %s:%d\n", cfg.Host, cfg.Port)
 }

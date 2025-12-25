@@ -16,6 +16,8 @@ func Env() Provider {
 	return &envProvider{}
 }
 
+func (envProvider) PrefixAware() bool { return true }
+
 func (p *envProvider) Values() (map[string]any, error) {
 	values := make(map[string]any)
 	for _, env := range os.Environ() {
@@ -28,18 +30,23 @@ func (p *envProvider) Values() (map[string]any, error) {
 
 type defaultsProvider[T any] struct {
 	prefix string
+	mapper KeyMapper
 }
+
+func (p *defaultsProvider[T]) PrefixAware() bool { return true }
 
 func Defaults[T any]() Provider {
 	return DefaultsWithPrefix[T]("")
 }
 
 func DefaultsWithPrefix[T any](prefix string) Provider {
-	return &defaultsProvider[T]{prefix: strings.ToUpper(prefix)}
+	return &defaultsProvider[T]{prefix: strings.ToUpper(prefix), mapper: defaultMapper}
 }
 
-func (p *defaultsProvider[T]) setPrefix(prefix string) {
-	p.prefix = strings.ToUpper(prefix)
+func (p *defaultsProvider[T]) setMapper(mapper KeyMapper) {
+	if mapper != nil {
+		p.mapper = mapper
+	}
 }
 
 func (p *defaultsProvider[T]) Values() (map[string]any, error) {
@@ -48,53 +55,59 @@ func (p *defaultsProvider[T]) Values() (map[string]any, error) {
 		return nil, err
 	}
 
-	strDefaults := extractDefaults(t, "")
+	if p.mapper == nil {
+		p.mapper = defaultMapper
+	}
+
+	strDefaults := extractDefaults(t, "", p.mapper)
 
 	values := make(map[string]any)
 	for k, v := range strDefaults {
-		values[k] = v
+		key := k
 		if p.prefix != "" {
-			values[p.prefix+"_"+k] = v
+			key = p.prefix + "_" + k
 		}
+		values[key] = v
 	}
 	return values, nil
 }
 
-func extractDefaults(t reflect.Type, path string) map[string]string {
+func extractDefaults(t reflect.Type, path string, mapper KeyMapper) map[string]string {
 	values := make(map[string]string)
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 
 		if field.Type.Kind() == reflect.Struct && field.Type != reflect.TypeOf(time.Time{}) {
-			nestedPath := path + toScreamingSnake(field.Name) + "_"
-			for k, v := range extractDefaults(field.Type, nestedPath) {
+			nestedPath := path + mapper.Field(field.Name) + "_"
+			for k, v := range extractDefaults(field.Type, nestedPath, mapper) {
 				values[k] = v
 			}
 			continue
 		}
 
 		if def := field.Tag.Get("default"); def != "" {
-			values[path+toScreamingSnake(field.Name)] = def
+			values[path+mapper.Field(field.Name)] = def
 		}
 	}
 	return values
 }
 
 type fileProvider struct {
-	path string
+	path   string
+	mapper KeyMapper
 }
 
 func File(path string) Provider {
 	absPath, _ := filepath.Abs(path)
-	return &fileProvider{path: absPath}
+	return &fileProvider{path: absPath, mapper: defaultMapper}
 }
 
 func (p *fileProvider) Values() (map[string]any, error) {
 	data, err := os.ReadFile(p.path)
+	if err != nil && os.IsNotExist(err) {
+		return nil, nil
+	}
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, err
 	}
 
@@ -117,8 +130,14 @@ func (p *fileProvider) Values() (map[string]any, error) {
 	}
 
 	values := make(map[string]any)
-	flattenMap("", raw, values)
+	flattenMap("", raw, values, p.mapper)
 	return values, nil
+}
+
+func (p *fileProvider) setMapper(mapper KeyMapper) {
+	if mapper != nil {
+		p.mapper = mapper
+	}
 }
 
 func parseDotEnv(data []byte) (map[string]string, error) {
@@ -139,11 +158,9 @@ func parseDotEnv(data []byte) (map[string]string, error) {
 		key := strings.TrimSpace(line[:idx])
 		val := strings.TrimSpace(line[idx+1:])
 
-		if len(val) >= 2 {
-			if (strings.HasPrefix(val, "\"") && strings.HasSuffix(val, "\"")) ||
-				(strings.HasPrefix(val, "'") && strings.HasSuffix(val, "'")) {
-				val = val[1 : len(val)-1]
-			}
+		if len(val) >= 2 && ((strings.HasPrefix(val, "\"") && strings.HasSuffix(val, "\"")) ||
+			(strings.HasPrefix(val, "'") && strings.HasSuffix(val, "'"))) {
+			val = val[1 : len(val)-1]
 		}
 
 		values[key] = val
@@ -151,16 +168,16 @@ func parseDotEnv(data []byte) (map[string]string, error) {
 	return values, nil
 }
 
-func flattenMap(prefix string, m map[string]any, out map[string]any) {
+func flattenMap(prefix string, m map[string]any, out map[string]any, mapper KeyMapper) {
 	for k, v := range m {
-		key := toScreamingSnake(k)
+		key := mapper.Field(k)
 		if prefix != "" {
 			key = prefix + "_" + key
 		}
 
 		switch val := v.(type) {
 		case map[string]any:
-			flattenMap(key, val, out)
+			flattenMap(key, val, out, mapper)
 		case []any:
 
 			out[key] = val
@@ -177,6 +194,8 @@ type mapProvider struct {
 func Map(values map[string]string) Provider {
 	return &mapProvider{values: values}
 }
+
+func (mapProvider) PrefixAware() bool { return false }
 
 func (p *mapProvider) Values() (map[string]any, error) {
 	values := make(map[string]any)

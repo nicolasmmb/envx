@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func parse(cfg any, values map[string]any, prefix string) error {
+func parseWithMapper(cfg any, values map[string]any, prefix string, mapper KeyMapper) error {
 	rv := reflect.ValueOf(cfg)
 	if rv.Kind() != reflect.Pointer || rv.IsNil() {
 		return &Error{Field: "config", Err: fmt.Errorf("%w: target must be a non-nil pointer to a struct", ErrUnsupportedType)}
@@ -20,10 +20,14 @@ func parse(cfg any, values map[string]any, prefix string) error {
 		return &Error{Field: "config", Err: fmt.Errorf("%w: target must point to a struct, got %s", ErrUnsupportedType, v.Kind())}
 	}
 
-	return parseStruct(v, v.Type(), "", values, prefix)
+	if mapper == nil {
+		mapper = defaultMapper
+	}
+
+	return parseStruct(v, v.Type(), "", values, prefix, mapper)
 }
 
-func parseStruct(v reflect.Value, t reflect.Type, path string, values map[string]any, prefix string) error {
+func parseStruct(v reflect.Value, t reflect.Type, path string, values map[string]any, prefix string, mapper KeyMapper) error {
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 		fv := v.Field(i)
@@ -33,14 +37,14 @@ func parseStruct(v reflect.Value, t reflect.Type, path string, values map[string
 		}
 
 		if field.Type.Kind() == reflect.Struct && field.Type != reflect.TypeOf(time.Time{}) {
-			nestedPath := path + toScreamingSnake(field.Name) + "_"
-			if err := parseStruct(fv, field.Type, nestedPath, values, prefix); err != nil {
+			nestedPath := path + mapper.Field(field.Name) + "_"
+			if err := parseStruct(fv, field.Type, nestedPath, values, prefix, mapper); err != nil {
 				return err
 			}
 			continue
 		}
 
-		key := path + toScreamingSnake(field.Name)
+		key := path + mapper.Field(field.Name)
 		if prefix != "" {
 			key = prefix + "_" + key
 		}
@@ -97,118 +101,148 @@ func setField(fv reflect.Value, val any) error {
 
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		if fv.Type() == reflect.TypeOf(time.Duration(0)) {
-			switch v := val.(type) {
-			case string:
-				d, err := time.ParseDuration(v)
-				if err != nil {
-					return err
-				}
-				fv.SetInt(int64(d))
-			case int64:
-				fv.SetInt(v)
-			case float64:
-				fv.SetInt(int64(v))
-			default:
-				return fmt.Errorf("invalid duration type: %T", val)
-			}
-		} else {
-			switch v := val.(type) {
-			case float64:
-				fv.SetInt(int64(v))
-			case int, int8, int16, int32, int64:
-				fv.SetInt(reflect.ValueOf(v).Int())
-			case string:
-				n, err := strconv.ParseInt(v, 10, 64)
-				if err != nil {
-					return err
-				}
-				fv.SetInt(n)
-			default:
-				return fmt.Errorf("invalid int value: %v", val)
-			}
+			return setDuration(fv, val)
 		}
+		return setIntValue(fv, val)
 
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		switch v := val.(type) {
-		case float64:
-			fv.SetUint(uint64(v))
-		case uint, uint8, uint16, uint32, uint64:
-			fv.SetUint(reflect.ValueOf(v).Uint())
-		case string:
-			n, err := strconv.ParseUint(v, 10, 64)
-			if err != nil {
-				return err
-			}
-			fv.SetUint(n)
-		default:
-			return fmt.Errorf("invalid uint value: %v", val)
-		}
+		return setUintValue(fv, val)
 
 	case reflect.Float32, reflect.Float64:
-		switch v := val.(type) {
-		case float64:
-			fv.SetFloat(v)
-		case string:
-			n, err := strconv.ParseFloat(v, 64)
-			if err != nil {
-				return err
-			}
-			fv.SetFloat(n)
-		default:
-			return fmt.Errorf("invalid float value: %v", val)
-		}
+		return setFloatValue(fv, val)
 
 	case reflect.Bool:
-		switch v := val.(type) {
-		case bool:
-			fv.SetBool(v)
-		case string:
-			b, err := strconv.ParseBool(v)
-			if err != nil {
-				return err
-			}
-			fv.SetBool(b)
-		default:
-			return fmt.Errorf("invalid bool value: %v", val)
-		}
+		return setBoolValue(fv, val)
 
 	case reflect.Slice:
-
-		var strParts []string
-
-		switch v := val.(type) {
-		case []any:
-
-			slice := reflect.MakeSlice(fv.Type(), len(v), len(v))
-			for i, item := range v {
-				if err := setField(slice.Index(i), item); err != nil {
-					return err
-				}
-			}
-			fv.Set(slice)
-			return nil
-		case string:
-
-			r := csv.NewReader(strings.NewReader(v))
-			parts, err := r.Read()
-			if err != nil {
-				parts = strings.Split(v, ",")
-			}
-			strParts = parts
-		default:
-			return fmt.Errorf("unsupported slice source type: %T", val)
+		items, err := normalizeSliceInput(val)
+		if err != nil {
+			return err
 		}
-
-		slice := reflect.MakeSlice(fv.Type(), len(strParts), len(strParts))
-		for i, p := range strParts {
-			if err := setField(slice.Index(i), strings.TrimSpace(p)); err != nil {
+		slice := reflect.MakeSlice(fv.Type(), len(items), len(items))
+		for i, item := range items {
+			if err := setField(slice.Index(i), item); err != nil {
 				return err
 			}
 		}
 		fv.Set(slice)
+		return nil
 
 	default:
 		return fmt.Errorf("%w: %s", ErrUnsupportedType, fv.Kind())
 	}
 	return nil
+}
+
+func setDuration(fv reflect.Value, val any) error {
+	switch v := val.(type) {
+	case string:
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return err
+		}
+		fv.SetInt(int64(d))
+	case int64:
+		fv.SetInt(v)
+	case float64:
+		fv.SetInt(int64(v))
+	default:
+		return fmt.Errorf("invalid duration type: %T", val)
+	}
+	return nil
+}
+
+func setIntValue(fv reflect.Value, val any) error {
+	switch v := val.(type) {
+	case float64:
+		fv.SetInt(int64(v))
+	case int, int8, int16, int32, int64:
+		fv.SetInt(reflect.ValueOf(v).Int())
+	case string:
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return err
+		}
+		fv.SetInt(n)
+	default:
+		return fmt.Errorf("invalid int value: %v", val)
+	}
+	return nil
+}
+
+func setUintValue(fv reflect.Value, val any) error {
+	switch v := val.(type) {
+	case float64:
+		fv.SetUint(uint64(v))
+	case uint, uint8, uint16, uint32, uint64:
+		fv.SetUint(reflect.ValueOf(v).Uint())
+	case string:
+		n, err := strconv.ParseUint(v, 10, 64)
+		if err != nil {
+			return err
+		}
+		fv.SetUint(n)
+	default:
+		return fmt.Errorf("invalid uint value: %v", val)
+	}
+	return nil
+}
+
+func setFloatValue(fv reflect.Value, val any) error {
+	switch v := val.(type) {
+	case float64:
+		fv.SetFloat(v)
+	case string:
+		n, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return err
+		}
+		fv.SetFloat(n)
+	default:
+		return fmt.Errorf("invalid float value: %v", val)
+	}
+	return nil
+}
+
+func setBoolValue(fv reflect.Value, val any) error {
+	switch v := val.(type) {
+	case bool:
+		fv.SetBool(v)
+	case string:
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return err
+		}
+		fv.SetBool(b)
+	default:
+		return fmt.Errorf("invalid bool value: %v", val)
+	}
+	return nil
+}
+
+func normalizeSliceInput(val any) ([]any, error) {
+	if items, ok := val.([]any); ok {
+		return items, nil
+	}
+
+	str, ok := val.(string)
+	if !ok {
+		return nil, fmt.Errorf("unsupported slice source type: %T", val)
+	}
+
+	parts := splitCSV(str)
+	items := make([]any, len(parts))
+	for i, p := range parts {
+		items[i] = strings.TrimSpace(p)
+	}
+	return items, nil
+}
+
+func splitCSV(s string) []string {
+	r := csv.NewReader(strings.NewReader(s))
+	parts, err := r.Read()
+	if err != nil {
+		return strings.Split(s, ",")
+	}
+	return parts
 }

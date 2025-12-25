@@ -14,26 +14,20 @@ func Load[T any](opts ...Option) (*T, error) {
 }
 
 func loadInternal[T any](opts ...Option) (map[string]any, *T, error) {
-	o := &options{output: os.Stdout}
-	for _, opt := range opts {
-		opt(o)
-	}
-
-	if len(o.providers) == 0 {
-		o.providers = []Provider{
-			DefaultsWithPrefix[T](o.prefix),
-			Env(),
-		}
-	}
+	o := prepareOptions[T](opts)
 
 	values := make(map[string]any)
 	for _, p := range o.providers {
-		if pa, ok := p.(interface{ setPrefix(string) }); ok {
-			pa.setPrefix(o.prefix)
+		if sm, ok := p.(interface{ setMapper(KeyMapper) }); ok {
+			sm.setMapper(o.mapper)
 		}
 		v, err := p.Values()
 		if err != nil {
 			return nil, nil, err
+		}
+		pa, ok := p.(prefixAware)
+		if o.prefix != "" && (!ok || !pa.PrefixAware()) {
+			v = applyPrefix(v, o.prefix)
 		}
 		for k, val := range v {
 			values[k] = val
@@ -41,7 +35,7 @@ func loadInternal[T any](opts ...Option) (map[string]any, *T, error) {
 	}
 
 	var cfg T
-	if err := parse(&cfg, values, o.prefix); err != nil {
+	if err := parseWithMapper(&cfg, values, o.prefix, o.mapper); err != nil {
 		return nil, nil, err
 	}
 
@@ -49,19 +43,95 @@ func loadInternal[T any](opts ...Option) (map[string]any, *T, error) {
 		return nil, nil, err
 	}
 
-	if o.validator != nil {
-		if err := o.validator(&cfg); err != nil {
-			return nil, nil, &Error{Field: "config", Err: fmt.Errorf("%w: %v", ErrValidation, err)}
-		}
+	if err := runOptionValidator(o.validator, &cfg); err != nil {
+		return nil, nil, err
 	}
 
-	if v, ok := any(&cfg).(Validator); ok {
-		if err := v.Validate(); err != nil {
-			return nil, nil, &Error{Field: "config", Err: fmt.Errorf("%w: %v", ErrValidation, err)}
-		}
+	if err := runTypeValidator(&cfg); err != nil {
+		return nil, nil, err
 	}
 
 	return values, &cfg, nil
+}
+
+func prepareOptions[T any](opts []Option) *options {
+	o := defaultOptions()
+	for _, opt := range opts {
+		opt(o)
+	}
+	finalizeOptions[T](o)
+	return o
+}
+
+func finalizeOptions[T any](o *options) {
+	if o.logger == nil {
+		o.logger = newWriterLogger(os.Stdout)
+	}
+	if o.mapper == nil {
+		o.mapper = defaultMapper
+	}
+	if len(o.providers) == 0 {
+		o.providers = []Provider{
+			DefaultsWithPrefix[T](o.prefix),
+			Env(),
+		}
+	}
+}
+
+func (l *Loader[T]) reloadConfig(o *options) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	oldConfig := l.config
+	_, newConfig, err := loadInternal[T](l.opts...)
+
+	if err != nil {
+		l.logReloadError(o, "reload failed", err)
+		return
+	}
+
+	if reflect.DeepEqual(oldConfig, newConfig) {
+		return
+	}
+
+	l.config = newConfig
+	l.version++
+	l.triggerOnReload(oldConfig, newConfig)
+}
+
+func (l *Loader[T]) logReloadError(o *options, msg string, err error) {
+	o.logger.Printf("envx: %s: %v\n", msg, err)
+	if o.onReloadError != nil {
+		o.onReloadError(err)
+	}
+}
+
+func (l *Loader[T]) triggerOnReload(oldConfig, newConfig *T) {
+	if l.onReload != nil {
+		go l.onReload(oldConfig, newConfig)
+	}
+}
+
+func runOptionValidator[T any](validator func(any) error, cfg *T) error {
+	if validator == nil {
+		return nil
+	}
+	return wrapValidationError(validator(cfg))
+}
+
+func runTypeValidator[T any](cfg *T) error {
+	v, ok := any(cfg).(Validator)
+	if !ok {
+		return nil
+	}
+	return wrapValidationError(v.Validate())
+}
+
+func wrapValidationError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &Error{Field: "config", Err: fmt.Errorf("%w: %v", ErrValidation, err)}
 }
 
 func MustLoad[T any](opts ...Option) *T {
@@ -77,18 +147,19 @@ type Loader[T any] struct {
 	config     *T
 	version    int64
 	stop       chan struct{}
-	watchWG    *sync.WaitGroup
+	watchWG    sync.WaitGroup
 	mu         sync.RWMutex
 	isWatching bool
 	onReload   func(any, any)
 }
 
+type prefixAware interface {
+	PrefixAware() bool
+}
+
 func NewLoader[T any](opts ...Option) *Loader[T] {
 	l := &Loader[T]{opts: opts}
-	o := &options{output: os.Stdout}
-	for _, opt := range opts {
-		opt(o)
-	}
+	o := prepareOptions[T](opts)
 	l.onReload = o.onReload
 	return l
 }
@@ -139,86 +210,98 @@ func (l *Loader[T]) StartWatching() error {
 		return nil
 	}
 
-	o := &options{output: os.Stdout}
-	for _, opt := range l.opts {
-		opt(o)
-	}
-
-	if o.output == nil {
-		o.output = os.Stdout
-	}
+	o := prepareOptions[T](l.opts)
 
 	if o.watchPath == "" {
 		return nil
 	}
 
-	if l.config == nil {
-		if _, err := l.loadLocked(); err != nil {
-			fmt.Fprintf(o.output, "envx: watch load failed: %v\n", err)
-			return err
-		}
+	if err := l.ensureConfigLoaded(o); err != nil {
+		return err
 	}
 
 	if o.watchEvery <= 0 {
 		err := fmt.Errorf("envx: watch interval must be greater than zero")
-		fmt.Fprintln(o.output, err.Error())
+		o.logger.Printf("%v\n", err)
 		return err
 	}
 
 	l.stop = make(chan struct{})
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
-	l.watchWG = wg
-	stop := l.stop
+	l.watchWG = sync.WaitGroup{}
+	l.watchWG.Add(1)
 	l.isWatching = true
-	var lastMod time.Time
 
-	if info, err := os.Stat(o.watchPath); err == nil {
-		lastMod = info.ModTime()
+	watcher := newWatchLoop(l, o, os.Stat)
+	go watcher.run(l.stop, &l.watchWG)
+
+	return nil
+}
+
+type statFunc func(string) (os.FileInfo, error)
+
+type watchLoop[T any] struct {
+	loader   *Loader[T]
+	opts     *options
+	path     string
+	interval time.Duration
+	stat     statFunc
+}
+
+func newWatchLoop[T any](loader *Loader[T], opts *options, stat statFunc) watchLoop[T] {
+	return watchLoop[T]{
+		loader:   loader,
+		opts:     opts,
+		path:     opts.watchPath,
+		interval: opts.watchEvery,
+		stat:     stat,
+	}
+}
+
+func (w watchLoop[T]) run(stop <-chan struct{}, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	lastMod := w.modTime()
+	ticker := time.NewTicker(w.interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			info, err := w.stat(w.path)
+			if err != nil {
+				continue
+			}
+
+			modTime := info.ModTime()
+			if !modTime.After(lastMod) {
+				continue
+			}
+
+			lastMod = modTime
+			w.loader.reloadConfig(w.opts)
+		}
+	}
+}
+
+func (w watchLoop[T]) modTime() time.Time {
+	info, err := w.stat(w.path)
+	if err != nil {
+		return time.Time{}
+	}
+	return info.ModTime()
+}
+
+func (l *Loader[T]) ensureConfigLoaded(o *options) error {
+	if l.config != nil {
+		return nil
 	}
 
-	go func(wg *sync.WaitGroup) {
-		defer wg.Done()
-		ticker := time.NewTicker(o.watchEvery)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-stop:
-				return
-			case <-ticker.C:
-				info, err := os.Stat(o.watchPath)
-				if err != nil {
-					continue
-				}
-				if info.ModTime().After(lastMod) {
-					lastMod = info.ModTime()
-
-					l.mu.Lock()
-					oldConfig := l.config
-					_, newConfig, err := loadInternal[T](l.opts...)
-
-					if err != nil {
-						fmt.Fprintf(o.output, "envx: reload failed: %v\n", err)
-						l.mu.Unlock()
-						continue
-					}
-
-					changed := !reflect.DeepEqual(oldConfig, newConfig)
-
-					if changed {
-						l.config = newConfig
-						l.version++
-						if l.onReload != nil {
-
-							go l.onReload(oldConfig, newConfig)
-						}
-					}
-					l.mu.Unlock()
-				}
-			}
-		}
-	}(wg)
+	if _, err := l.loadLocked(); err != nil {
+		l.logReloadError(o, "watch load failed", err)
+		return err
+	}
 
 	return nil
 }
@@ -231,18 +314,26 @@ func (l *Loader[T]) StopWatching() {
 	}
 
 	stop := l.stop
-	wg := l.watchWG
+	wg := &l.watchWG
 
 	l.stop = nil
 	l.isWatching = false
-	l.watchWG = nil
 	l.mu.Unlock()
 
 	if stop != nil {
 		close(stop)
 	}
 
-	if wg != nil {
-		wg.Wait()
+	wg.Wait()
+}
+
+func applyPrefix(values map[string]any, prefix string) map[string]any {
+	if prefix == "" {
+		return values
 	}
+	prefixed := make(map[string]any, len(values))
+	for k, v := range values {
+		prefixed[prefix+"_"+k] = v
+	}
+	return prefixed
 }
