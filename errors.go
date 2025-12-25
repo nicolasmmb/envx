@@ -1,4 +1,3 @@
-// Package envx provides type-safe configuration loading from environment variables.
 package envx
 
 import (
@@ -6,7 +5,6 @@ import (
 	"fmt"
 )
 
-// Sentinel errors for use with errors.Is.
 var (
 	ErrRequired        = errors.New("required field is empty")
 	ErrValidation      = errors.New("validation failed")
@@ -14,7 +12,6 @@ var (
 	ErrParse           = errors.New("parse error")
 )
 
-// Error wraps configuration errors with context.
 type Error struct {
 	Field string
 	Err   error

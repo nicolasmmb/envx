@@ -9,7 +9,6 @@ import (
 	"time"
 )
 
-// parse populates cfg from values map using prefix.
 func parse(cfg any, values map[string]any, prefix string) error {
 	v := reflect.ValueOf(cfg).Elem()
 	t := v.Type()
@@ -183,12 +182,12 @@ func setField(fv reflect.Value, val any) error {
 		}
 
 	case reflect.Slice:
-		// Handle []any (from JSON/Config) or string (from Env/CSV)
+
 		var strParts []string
 
 		switch v := val.(type) {
 		case []any:
-			// If we got a real slice from JSON
+
 			slice := reflect.MakeSlice(fv.Type(), len(v), len(v))
 			for i, item := range v {
 				if err := setField(slice.Index(i), item); err != nil {
@@ -198,7 +197,7 @@ func setField(fv reflect.Value, val any) error {
 			fv.Set(slice)
 			return nil
 		case string:
-			// Fallback to CSV parsing for strings
+
 			r := csv.NewReader(strings.NewReader(v))
 			parts, err := r.Read()
 			if err != nil {

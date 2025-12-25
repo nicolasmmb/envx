@@ -8,7 +8,6 @@ import (
 	"time"
 )
 
-// Load loads configuration into T using environment variables.
 func Load[T any](opts ...Option) (*T, error) {
 	_, cfg, err := loadInternal[T](opts...)
 	return cfg, err
@@ -62,7 +61,6 @@ func loadInternal[T any](opts ...Option) (map[string]any, *T, error) {
 	return values, &cfg, nil
 }
 
-// MustLoad is like Load but panics on error.
 func MustLoad[T any](opts ...Option) *T {
 	cfg, err := Load[T](opts...)
 	if err != nil {
@@ -71,7 +69,6 @@ func MustLoad[T any](opts ...Option) *T {
 	return cfg
 }
 
-// Loader provides hot-reloading capabilities.
 type Loader[T any] struct {
 	opts       []Option
 	config     *T
@@ -82,7 +79,6 @@ type Loader[T any] struct {
 	onReload   func(any, any)
 }
 
-// NewLoader creates a loader for hot-reloadable configuration.
 func NewLoader[T any](opts ...Option) *Loader[T] {
 	l := &Loader[T]{opts: opts}
 	o := &options{}
@@ -93,7 +89,6 @@ func NewLoader[T any](opts ...Option) *Loader[T] {
 	return l
 }
 
-// Load loads the configuration.
 func (l *Loader[T]) Load() (*T, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -112,7 +107,6 @@ func (l *Loader[T]) loadLocked() (*T, error) {
 	return cfg, nil
 }
 
-// MustLoad loads configuration or panics.
 func (l *Loader[T]) MustLoad() *T {
 	cfg, err := l.Load()
 	if err != nil {
@@ -121,21 +115,18 @@ func (l *Loader[T]) MustLoad() *T {
 	return cfg
 }
 
-// Get returns the current configuration.
 func (l *Loader[T]) Get() *T {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	return l.config
 }
 
-// Version returns the configuration version.
 func (l *Loader[T]) Version() int64 {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	return l.version
 }
 
-// StartWatching starts watching for file changes.
 func (l *Loader[T]) StartWatching() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -153,10 +144,9 @@ func (l *Loader[T]) StartWatching() {
 		return
 	}
 
-	// Initial load to ensure we have a base config
 	if l.config == nil {
 		if _, err := l.loadLocked(); err != nil {
-			// ignore error on initial load attempt in background?
+
 		}
 	}
 
@@ -189,19 +179,14 @@ func (l *Loader[T]) StartWatching() {
 					_, newConfig, err := loadInternal[T](l.opts...)
 
 					if err == nil {
-						// Only notify/update if something actually changed deep inside?
-						// Or just notify always on file change?
-						// Usually file mod implies change.
-						// Checking DeepEqual prevents spurious updates if file touched but content same.
+
 						changed := !reflect.DeepEqual(oldConfig, newConfig)
 
 						if changed {
 							l.config = newConfig
 							l.version++
 							if l.onReload != nil {
-								// Call callback in goroutine to avoid blocking/deadlock?
-								// Since we hold lock, calling user code is risky.
-								// But capturing old/new is fine.
+
 								go l.onReload(oldConfig, newConfig)
 							}
 						}
@@ -213,7 +198,6 @@ func (l *Loader[T]) StartWatching() {
 	}()
 }
 
-// StopWatching stops the file watcher.
 func (l *Loader[T]) StopWatching() {
 	l.mu.Lock()
 	defer l.mu.Unlock()

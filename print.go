@@ -9,12 +9,10 @@ import (
 	"time"
 )
 
-// Print writes configuration to stdout with secret masking.
 func Print[T any](cfg *T) {
 	PrintTo(os.Stdout, cfg)
 }
 
-// PrintTo writes configuration to w with secret masking.
 func PrintTo[T any](w io.Writer, cfg *T) {
 	v := reflect.ValueOf(cfg).Elem()
 	t := v.Type()
@@ -39,7 +37,6 @@ func printStruct(w io.Writer, v reflect.Value, t reflect.Type, indent string) {
 		name := toScreamingSnake(field.Name)
 		val := fmt.Sprintf("%v", fv.Interface())
 
-		// Mask secrets
 		if isSecret(field) && len(val) > 0 {
 			if len(val) > 8 {
 				val = val[:3] + "***" + val[len(val)-3:]

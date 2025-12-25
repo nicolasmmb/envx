@@ -9,13 +9,8 @@ import (
 	"time"
 )
 
-// ============================================================================
-// Environment Provider
-// ============================================================================
-
 type envProvider struct{}
 
-// Env returns a provider that reads from environment variables.
 func Env() Provider {
 	return &envProvider{}
 }
@@ -30,13 +25,8 @@ func (p *envProvider) Values() (map[string]any, error) {
 	return values, nil
 }
 
-// ============================================================================
-// Defaults Provider
-// ============================================================================
-
 type defaultsProvider[T any] struct{}
 
-// Defaults returns a provider that reads default values from struct tags.
 func Defaults[T any]() Provider {
 	return &defaultsProvider[T]{}
 }
@@ -72,15 +62,10 @@ func extractDefaults(t reflect.Type, path string) map[string]string {
 	return values
 }
 
-// ============================================================================
-// File Provider
-// ============================================================================
-
 type fileProvider struct {
 	path string
 }
 
-// File returns a provider that reads from a file (JSON or .env).
 func File(path string) Provider {
 	absPath, _ := filepath.Abs(path)
 	return &fileProvider{path: absPath}
@@ -108,7 +93,6 @@ func (p *fileProvider) Values() (map[string]any, error) {
 		return values, nil
 	}
 
-	// Default to JSON
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, err
@@ -137,7 +121,6 @@ func parseDotEnv(data []byte) (map[string]string, error) {
 		key := strings.TrimSpace(line[:idx])
 		val := strings.TrimSpace(line[idx+1:])
 
-		// Remove quotes if present
 		if len(val) >= 2 {
 			if (strings.HasPrefix(val, "\"") && strings.HasSuffix(val, "\"")) ||
 				(strings.HasPrefix(val, "'") && strings.HasSuffix(val, "'")) {
@@ -150,8 +133,6 @@ func parseDotEnv(data []byte) (map[string]string, error) {
 	return values, nil
 }
 
-// flattenMap now preserves types where possible, but keys are flattened.
-// Since keys are strings, the map is map[string]any.
 func flattenMap(prefix string, m map[string]any, out map[string]any) {
 	for k, v := range m {
 		key := toScreamingSnake(k)
@@ -163,10 +144,7 @@ func flattenMap(prefix string, m map[string]any, out map[string]any) {
 		case map[string]any:
 			flattenMap(key, val, out)
 		case []any:
-			// For slices, kept as is for now, parser will handle []any -> []type
-			// Or we could flatten slices too? Current logic used to join strings.
-			// Let's defer slice logic to 'parse' or keep it simple.
-			// Ideally we shouldn't flatten slices into strings if we have any.
+
 			out[key] = val
 		default:
 			out[key] = val
@@ -174,15 +152,10 @@ func flattenMap(prefix string, m map[string]any, out map[string]any) {
 	}
 }
 
-// ============================================================================
-// Map Provider
-// ============================================================================
-
 type mapProvider struct {
 	values map[string]string
 }
 
-// Map returns a provider from a string map.
 func Map(values map[string]string) Provider {
 	return &mapProvider{values: values}
 }
@@ -196,10 +169,7 @@ func (p *mapProvider) Values() (map[string]any, error) {
 }
 
 // ============================================================================
-// Helpers
-// ============================================================================
 
-// toScreamingSnake converts CamelCase to SCREAMING_SNAKE_CASE.
 func toScreamingSnake(s string) string {
 	var b strings.Builder
 	runes := []rune(s)
