@@ -81,7 +81,7 @@ type Loader[T any] struct {
 
 func NewLoader[T any](opts ...Option) *Loader[T] {
 	l := &Loader[T]{opts: opts}
-	o := &options{}
+	o := &options{output: os.Stdout}
 	for _, opt := range opts {
 		opt(o)
 	}
@@ -135,9 +135,13 @@ func (l *Loader[T]) StartWatching() {
 		return
 	}
 
-	o := &options{}
+	o := &options{output: os.Stdout}
 	for _, opt := range l.opts {
 		opt(o)
+	}
+
+	if o.output == nil {
+		o.output = os.Stdout
 	}
 
 	if o.watchPath == "" {
@@ -146,8 +150,14 @@ func (l *Loader[T]) StartWatching() {
 
 	if l.config == nil {
 		if _, err := l.loadLocked(); err != nil {
-
+			fmt.Fprintf(o.output, "envx: watch load failed: %v\n", err)
+			return
 		}
+	}
+
+	if o.watchEvery <= 0 {
+		fmt.Fprintln(o.output, "envx: watch interval must be greater than zero")
+		return
 	}
 
 	l.stop = make(chan struct{})
