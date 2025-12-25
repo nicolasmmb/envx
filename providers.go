@@ -2,6 +2,7 @@ package envx
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -32,8 +33,12 @@ func Defaults[T any]() Provider {
 }
 
 func (p *defaultsProvider[T]) Values() (map[string]any, error) {
-	var cfg T
-	strDefaults := extractDefaults(reflect.TypeOf(cfg), "")
+	t, err := resolveStructType[T]()
+	if err != nil {
+		return nil, err
+	}
+
+	strDefaults := extractDefaults(t, "")
 
 	values := make(map[string]any)
 	for k, v := range strDefaults {
@@ -169,6 +174,19 @@ func (p *mapProvider) Values() (map[string]any, error) {
 }
 
 // ============================================================================
+
+func resolveStructType[T any]() (reflect.Type, error) {
+	t := reflect.TypeOf((*T)(nil)).Elem()
+	for t != nil && t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+
+	if t == nil || t.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("%w: configuration type must be a struct", ErrUnsupportedType)
+	}
+
+	return t, nil
+}
 
 func toScreamingSnake(s string) string {
 	var b strings.Builder
