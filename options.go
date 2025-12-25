@@ -1,6 +1,7 @@
 package envx
 
 import (
+	"fmt"
 	"io"
 	"path/filepath"
 	"strings"
@@ -49,9 +50,15 @@ func WithOnReload[T any](fn func(old *T, new *T)) Option {
 	}
 }
 
-func WithValidator(fn func(any) error) Option {
+func WithValidator[T any](fn func(*T) error) Option {
 	return func(o *options) {
-		o.validator = fn
+		o.validator = func(cfg any) error {
+			c, ok := cfg.(*T)
+			if !ok {
+				return fmt.Errorf("%w: validator type mismatch", ErrUnsupportedType)
+			}
+			return fn(c)
+		}
 	}
 }
 
