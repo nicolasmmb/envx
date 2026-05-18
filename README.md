@@ -7,7 +7,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/nicolasmmb/envx.svg)](https://pkg.go.dev/github.com/nicolasmmb/envx)
 [![Go Report Card](https://goreportcard.com/badge/github.com/nicolasmmb/envx)](https://goreportcard.com/report/github.com/nicolasmmb/envx)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)](https://go.dev/)
 
 **Zero dependencies • Type-safe • Simple API • Hot reload**
 

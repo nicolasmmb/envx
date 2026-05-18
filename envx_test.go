@@ -911,6 +911,43 @@ func TestApplyPrefixForMapProvider(t *testing.T) {
 	}
 }
 
+func TestApplyPrefixForMapProvider_AlreadyPrefixedKey(t *testing.T) {
+	type Config struct {
+		Port int `envx:"name=PORT,default=8080"`
+	}
+
+	cfg, err := Load[Config](
+		WithPrefix("APP"),
+		WithProvider(Map(map[string]string{"APP_PORT": "9090"})),
+	)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Port != 9090 {
+		t.Fatalf("expected APP_PORT value 9090, got %d", cfg.Port)
+	}
+}
+
+func TestApplyPrefixForMapProvider_PrefixedKeyWinsOverUnprefixed(t *testing.T) {
+	type Config struct {
+		Port int `envx:"name=PORT,default=8080"`
+	}
+
+	cfg, err := Load[Config](
+		WithPrefix("APP"),
+		WithProvider(Map(map[string]string{
+			"PORT":     "1111",
+			"APP_PORT": "2222",
+		})),
+	)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Port != 2222 {
+		t.Fatalf("expected explicit APP_PORT value 2222, got %d", cfg.Port)
+	}
+}
+
 func TestWithLogger(t *testing.T) {
 	tmpfile := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(tmpfile, []byte(`{"port": 8080}`), 0644); err != nil {

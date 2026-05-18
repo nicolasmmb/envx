@@ -3,6 +3,7 @@ package envx
 import (
 	"encoding/csv"
 	"fmt"
+	"math"
 	"reflect"
 	"strconv"
 	"strings"
@@ -53,14 +54,7 @@ func parseStruct(v reflect.Value, t reflect.Type, path string, values map[string
 			continue
 		}
 
-		name := toScreamingSnake(field.Name)
-		if tag.Name != "" {
-			name = tag.Name
-		}
-		key := path + name
-		if prefix != "" {
-			key = prefix + "_" + key
-		}
+		key := withPrefix(prefix, fieldKey(path, field.Name, tag.Name))
 
 		val, ok := values[key]
 		if !ok || val == nil {
@@ -83,12 +77,16 @@ func parseStruct(v reflect.Value, t reflect.Type, path string, values map[string
 }
 
 func validateRequired(cfg any) error {
-	v := reflect.ValueOf(cfg).Elem()
-	t := v.Type()
-	return checkRequired(v, t, "")
+	return validateRequiredAgainstValues(cfg, nil, "")
 }
 
-func checkRequired(v reflect.Value, t reflect.Type, path string) error {
+func validateRequiredAgainstValues(cfg any, values map[string]any, prefix string) error {
+	v := reflect.ValueOf(cfg).Elem()
+	t := v.Type()
+	return checkRequired(v, t, "", values, prefix)
+}
+
+func checkRequired(v reflect.Value, t reflect.Type, path string, values map[string]any, prefix string) error {
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 		fv := v.Field(i)
@@ -104,22 +102,38 @@ func checkRequired(v reflect.Value, t reflect.Type, path string) error {
 				nestedName = tag.Name
 			}
 			nestedPath := path + nestedName + "_"
-			if err := checkRequired(fv, field.Type, nestedPath); err != nil {
+			if err := checkRequired(fv, field.Type, nestedPath, values, prefix); err != nil {
 				return err
 			}
 			continue
 		}
 
-		if tag.Required && isZero(fv) {
-			name := toScreamingSnake(field.Name)
-			if tag.Name != "" {
-				name = tag.Name
+		if tag.Required {
+			key := withPrefix(prefix, fieldKey(path, field.Name, tag.Name))
+			if requiredMissing(key, fv, values) {
+				return &Error{Field: key, Err: ErrRequired}
 			}
-			return &Error{Field: path + name, Err: ErrRequired}
 		}
 
 	}
 	return nil
+}
+
+func requiredMissing(key string, fv reflect.Value, values map[string]any) bool {
+	if values == nil {
+		return isZero(fv)
+	}
+
+	val, ok := values[key]
+	if !ok || val == nil {
+		return true
+	}
+
+	if fv.Kind() == reflect.String && fv.String() == "" {
+		return true
+	}
+
+	return false
 }
 
 func validateEnumValue(key string, fv reflect.Value, allowed []string) error {
@@ -201,9 +215,19 @@ func setDuration(fv reflect.Value, val any) error {
 		}
 		fv.SetInt(int64(d))
 	case int64:
+		if fv.OverflowInt(v) {
+			return fmt.Errorf("duration overflow: %d", v)
+		}
 		fv.SetInt(v)
 	case float64:
-		fv.SetInt(int64(v))
+		if math.IsNaN(v) || math.IsInf(v, 0) || math.Trunc(v) != v {
+			return fmt.Errorf("invalid duration value: %v", val)
+		}
+		n := int64(v)
+		if fv.OverflowInt(n) {
+			return fmt.Errorf("duration overflow: %v", val)
+		}
+		fv.SetInt(n)
 	default:
 		return fmt.Errorf("invalid duration type: %T", val)
 	}
@@ -213,13 +237,27 @@ func setDuration(fv reflect.Value, val any) error {
 func setIntValue(fv reflect.Value, val any) error {
 	switch v := val.(type) {
 	case float64:
-		fv.SetInt(int64(v))
+		if math.IsNaN(v) || math.IsInf(v, 0) || math.Trunc(v) != v {
+			return fmt.Errorf("invalid int value: %v", val)
+		}
+		n := int64(v)
+		if fv.OverflowInt(n) {
+			return fmt.Errorf("invalid int value: %v", val)
+		}
+		fv.SetInt(n)
 	case int, int8, int16, int32, int64:
-		fv.SetInt(reflect.ValueOf(v).Int())
+		n := reflect.ValueOf(v).Int()
+		if fv.OverflowInt(n) {
+			return fmt.Errorf("invalid int value: %v", val)
+		}
+		fv.SetInt(n)
 	case string:
 		n, err := strconv.ParseInt(v, 10, 64)
 		if err != nil {
 			return err
+		}
+		if fv.OverflowInt(n) {
+			return fmt.Errorf("invalid int value: %v", val)
 		}
 		fv.SetInt(n)
 	default:
@@ -231,13 +269,27 @@ func setIntValue(fv reflect.Value, val any) error {
 func setUintValue(fv reflect.Value, val any) error {
 	switch v := val.(type) {
 	case float64:
-		fv.SetUint(uint64(v))
+		if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || math.Trunc(v) != v {
+			return fmt.Errorf("invalid uint value: %v", val)
+		}
+		n := uint64(v)
+		if float64(n) != v || fv.OverflowUint(n) {
+			return fmt.Errorf("invalid uint value: %v", val)
+		}
+		fv.SetUint(n)
 	case uint, uint8, uint16, uint32, uint64:
-		fv.SetUint(reflect.ValueOf(v).Uint())
+		n := reflect.ValueOf(v).Uint()
+		if fv.OverflowUint(n) {
+			return fmt.Errorf("invalid uint value: %v", val)
+		}
+		fv.SetUint(n)
 	case string:
 		n, err := strconv.ParseUint(v, 10, 64)
 		if err != nil {
 			return err
+		}
+		if fv.OverflowUint(n) {
+			return fmt.Errorf("invalid uint value: %v", val)
 		}
 		fv.SetUint(n)
 	default:
@@ -303,4 +355,24 @@ func splitCSV(s string) []string {
 		return strings.Split(s, ",")
 	}
 	return parts
+}
+
+func fieldKey(path, fieldName, tagName string) string {
+	name := toScreamingSnake(fieldName)
+	if tagName != "" {
+		name = tagName
+	}
+
+	if path != "" && tagName != "" && strings.HasPrefix(name, path) {
+		return name
+	}
+
+	return path + name
+}
+
+func withPrefix(prefix, key string) string {
+	if prefix == "" {
+		return key
+	}
+	return prefix + "_" + key
 }

@@ -84,11 +84,7 @@ func extractDefaults(t reflect.Type, path string) map[string]string {
 		}
 
 		if tag.HasDefault {
-			name := toScreamingSnake(field.Name)
-			if tag.Name != "" {
-				name = tag.Name
-			}
-			values[path+name] = tag.Default
+			values[fieldKey(path, field.Name, tag.Name)] = tag.Default
 		}
 	}
 	return values

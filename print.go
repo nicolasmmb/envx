@@ -16,6 +16,18 @@ func Print[T any](cfg *T) {
 }
 
 func PrintTo[T any](w io.Writer, cfg *T) {
+	if w == nil {
+		w = os.Stdout
+	}
+
+	if cfg == nil {
+		fmt.Fprintln(w, "Configuration:")
+		fmt.Fprintln(w, strings.Repeat("─", 50))
+		fmt.Fprintln(w, "<nil>")
+		fmt.Fprintln(w, strings.Repeat("─", 50))
+		return
+	}
+
 	v := reflect.ValueOf(cfg).Elem()
 	t := v.Type()
 

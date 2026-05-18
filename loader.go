@@ -36,7 +36,7 @@ func loadInternal[T any](opts ...Option) (map[string]any, *T, error) {
 		return nil, nil, err
 	}
 
-	if err := validateRequired(&cfg); err != nil {
+	if err := validateRequiredAgainstValues(&cfg, values, o.prefix); err != nil {
 		return nil, nil, err
 	}
 
