@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func parse(cfg any, values map[string]any, prefix string) error {
+func parse(cfg any, values map[string]any, prefix string, logger Logger) error {
 	rv := reflect.ValueOf(cfg)
 	if rv.Kind() != reflect.Pointer || rv.IsNil() {
 		return &Error{Field: "config", Err: fmt.Errorf("%w: target must be a non-nil pointer to a struct", ErrUnsupportedType)}
@@ -20,10 +20,14 @@ func parse(cfg any, values map[string]any, prefix string) error {
 		return &Error{Field: "config", Err: fmt.Errorf("%w: target must point to a struct, got %s", ErrUnsupportedType, v.Kind())}
 	}
 
-	return parseStruct(v, v.Type(), "", values, prefix)
+	if logger == nil {
+		logger = defaultOptions().logger
+	}
+
+	return parseStruct(v, v.Type(), "", values, prefix, logger)
 }
 
-func parseStruct(v reflect.Value, t reflect.Type, path string, values map[string]any, prefix string) error {
+func parseStruct(v reflect.Value, t reflect.Type, path string, values map[string]any, prefix string, logger Logger) error {
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 		fv := v.Field(i)
@@ -32,15 +36,28 @@ func parseStruct(v reflect.Value, t reflect.Type, path string, values map[string
 			continue
 		}
 
+		tag := parseEnvxTag(field.Tag.Get("envx"))
+		if tag.Skip {
+			continue
+		}
+
 		if field.Type.Kind() == reflect.Struct && field.Type != reflect.TypeOf(time.Time{}) {
-			nestedPath := path + toScreamingSnake(field.Name) + "_"
-			if err := parseStruct(fv, field.Type, nestedPath, values, prefix); err != nil {
+			nestedName := toScreamingSnake(field.Name)
+			if tag.Name != "" {
+				nestedName = tag.Name
+			}
+			nestedPath := path + nestedName + "_"
+			if err := parseStruct(fv, field.Type, nestedPath, values, prefix, logger); err != nil {
 				return err
 			}
 			continue
 		}
 
-		key := path + toScreamingSnake(field.Name)
+		name := toScreamingSnake(field.Name)
+		if tag.Name != "" {
+			name = tag.Name
+		}
+		key := path + name
 		if prefix != "" {
 			key = prefix + "_" + key
 		}
@@ -50,8 +67,16 @@ func parseStruct(v reflect.Value, t reflect.Type, path string, values map[string
 			continue
 		}
 
+		if tag.Deprecated {
+			logDeprecatedKey(logger, key)
+		}
+
 		if err := setField(fv, val); err != nil {
 			return &Error{Field: key, Err: fmt.Errorf("%w: %v", ErrParse, err)}
+		}
+
+		if err := validateEnumValue(key, fv, tag.Enum); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -68,19 +93,56 @@ func checkRequired(v reflect.Value, t reflect.Type, path string) error {
 		field := t.Field(i)
 		fv := v.Field(i)
 
+		tag := parseEnvxTag(field.Tag.Get("envx"))
+		if tag.Skip {
+			continue
+		}
+
 		if field.Type.Kind() == reflect.Struct && field.Type != reflect.TypeOf(time.Time{}) {
-			nestedPath := path + toScreamingSnake(field.Name) + "_"
+			nestedName := toScreamingSnake(field.Name)
+			if tag.Name != "" {
+				nestedName = tag.Name
+			}
+			nestedPath := path + nestedName + "_"
 			if err := checkRequired(fv, field.Type, nestedPath); err != nil {
 				return err
 			}
 			continue
 		}
 
-		if field.Tag.Get("required") == "true" && isZero(fv) {
-			return &Error{Field: path + toScreamingSnake(field.Name), Err: ErrRequired}
+		if tag.Required && isZero(fv) {
+			name := toScreamingSnake(field.Name)
+			if tag.Name != "" {
+				name = tag.Name
+			}
+			return &Error{Field: path + name, Err: ErrRequired}
 		}
+
 	}
 	return nil
+}
+
+func validateEnumValue(key string, fv reflect.Value, allowed []string) error {
+	if len(allowed) == 0 || !fv.IsValid() || fv.IsZero() {
+		return nil
+	}
+	if fv.Kind() != reflect.String {
+		return &Error{Field: key, Err: fmt.Errorf("%w: enum can only be used with string fields", ErrParse)}
+	}
+	val := fv.String()
+	for _, option := range allowed {
+		if val == option {
+			return nil
+		}
+	}
+	return &Error{Field: key, Err: fmt.Errorf("%w: %q not in enum", ErrParse, val)}
+}
+
+func logDeprecatedKey(logger Logger, key string) {
+	if logger == nil {
+		return
+	}
+	logger.Printf("envx: deprecated key used: %s\n", key)
 }
 
 func isZero(v reflect.Value) bool {

@@ -22,7 +22,7 @@ func (f failingProvider) Values() (map[string]any, error) {
 }
 
 type typeValidatedConfig struct {
-	Port int `default:"8080"`
+	Port int `envx:"default=8080"`
 }
 
 func (t typeValidatedConfig) Validate() error {
@@ -48,10 +48,10 @@ func (b *lockedBuffer) Bytes() []byte {
 
 func TestLoad_Defaults(t *testing.T) {
 	type Config struct {
-		Port    int           `default:"8080"`
-		Host    string        `default:"localhost"`
-		Debug   bool          `default:"false"`
-		Timeout time.Duration `default:"30s"`
+		Port    int           `envx:"name=PORT,default=8080"`
+		Host    string        `envx:"name=HOST,default=localhost"`
+		Debug   bool          `envx:"name=DEBUG,default=false"`
+		Timeout time.Duration `envx:"name=TIMEOUT,default=30s"`
 	}
 
 	cfg, err := Load[Config]()
@@ -82,8 +82,8 @@ func TestLoad_Env(t *testing.T) {
 	})
 
 	type Config struct {
-		Port  int  `default:"8080"`
-		Debug bool `default:"false"`
+		Port  int  `envx:"name=PORT,default=8080"`
+		Debug bool `envx:"name=DEBUG,default=false"`
 	}
 
 	cfg, err := Load[Config]()
@@ -112,7 +112,7 @@ func TestLoad_UnsupportedType(t *testing.T) {
 
 func TestLoad_Required(t *testing.T) {
 	type Config struct {
-		DatabaseURL string `required:"true"`
+		DatabaseURL string `envx:"name=DATABASE_URL,required=true"`
 	}
 
 	_, err := Load[Config]()
@@ -123,7 +123,7 @@ func TestLoad_Required(t *testing.T) {
 
 func TestLoad_RequiredTime(t *testing.T) {
 	type Config struct {
-		StartedAt time.Time `required:"true"`
+		StartedAt time.Time `envx:"name=STARTED_AT,required=true"`
 	}
 
 	_, err := Load[Config]()
@@ -141,7 +141,7 @@ func TestLoad_RequiredWithValue(t *testing.T) {
 	t.Cleanup(func() { os.Unsetenv("DATABASE_URL") })
 
 	type Config struct {
-		DatabaseURL string `required:"true"`
+		DatabaseURL string `envx:"name=DATABASE_URL,required=true"`
 	}
 
 	cfg, err := Load[Config]()
@@ -164,8 +164,8 @@ func TestLoad_NestedStruct(t *testing.T) {
 
 	type Config struct {
 		Database struct {
-			Host string `default:"localhost"`
-			Port int    `default:"3306"`
+			Host string `envx:"name=HOST,default=localhost"`
+			Port int    `envx:"name=PORT,default=3306"`
 		}
 	}
 
@@ -267,7 +267,7 @@ func TestLoad_WithPrefix(t *testing.T) {
 	t.Cleanup(func() { os.Unsetenv("APP_PORT") })
 
 	type Config struct {
-		Port int `default:"8080"`
+		Port int `envx:"name=PORT,default=8080"`
 	}
 
 	cfg, err := Load[Config](WithPrefix("APP"))
@@ -285,7 +285,7 @@ func TestLoad_WithPrefix_IgnoresUnprefixed(t *testing.T) {
 	t.Cleanup(func() { os.Unsetenv("PORT") })
 
 	type Config struct {
-		Port int `default:"8080"`
+		Port int `envx:"name=PORT,default=8080"`
 	}
 
 	cfg, err := Load[Config](WithPrefix("APP"))
@@ -300,7 +300,7 @@ func TestLoad_WithPrefix_IgnoresUnprefixed(t *testing.T) {
 
 func TestLoad_WithPrefixDefaults(t *testing.T) {
 	type Config struct {
-		Port int `default:"8080"`
+		Port int `envx:"name=PORT,default=8080"`
 	}
 
 	cfg, err := Load[Config](WithPrefix("APP"))
@@ -331,7 +331,7 @@ func TestLoader_ReloadErrorIsLogged(t *testing.T) {
 	}
 
 	type Config struct {
-		Port int `default:"8080"`
+		Port int `envx:"name=PORT,default=8080"`
 	}
 
 	var buf lockedBuffer
@@ -380,8 +380,8 @@ func TestLoader_ReloadErrorIsLogged(t *testing.T) {
 
 func TestLoad_WithProvider(t *testing.T) {
 	type Config struct {
-		Port int    `default:"8080"`
-		Host string `default:"localhost"`
+		Port int    `envx:"name=PORT,default=8080"`
+		Host string `envx:"name=HOST,default=localhost"`
 	}
 
 	cfg, err := Load[Config](
@@ -405,7 +405,7 @@ func TestLoad_WithProvider(t *testing.T) {
 
 func TestLoad_WithValidator(t *testing.T) {
 	type Config struct {
-		Port int `default:"80"`
+		Port int `envx:"name=PORT,default=80"`
 	}
 
 	_, err := Load[Config](
@@ -423,7 +423,7 @@ func TestLoad_WithValidator(t *testing.T) {
 }
 
 type validatableConfig struct {
-	Port int `default:"80"`
+	Port int `envx:"name=PORT,default=80"`
 }
 
 func (c *validatableConfig) Validate() error {
@@ -445,7 +445,7 @@ func TestLoad_Duration(t *testing.T) {
 	t.Cleanup(func() { os.Unsetenv("TIMEOUT") })
 
 	type Config struct {
-		Timeout time.Duration `default:"30s"`
+		Timeout time.Duration `envx:"name=TIMEOUT,default=30s"`
 	}
 
 	cfg, err := Load[Config]()
@@ -467,7 +467,7 @@ func TestMustLoad_Panics(t *testing.T) {
 	}()
 
 	type Config struct {
-		Required string `required:"true"`
+		Required string `envx:"name=REQUIRED,required=true"`
 	}
 
 	MustLoad[Config]()
@@ -475,9 +475,9 @@ func TestMustLoad_Panics(t *testing.T) {
 
 func TestPrint_MasksSecrets(t *testing.T) {
 	type Config struct {
-		Port      int    `default:"8080"`
-		JWTSecret string `default:"supersecretkey123" secret:"true"`
-		Password  string `default:"mypassword"`
+		Port      int    `envx:"name=PORT,default=8080"`
+		JWTSecret string `envx:"name=JWT_SECRET,default=supersecretkey123,secret=true"`
+		Password  string `envx:"name=PASSWORD,default=mypassword"`
 	}
 
 	cfg := MustLoad[Config]()
@@ -547,8 +547,8 @@ func TestLoader_OnReload(t *testing.T) {
 	}
 
 	type Config struct {
-		Port  int  `default:"8080"`
-		Debug bool `default:"false"`
+		Port  int  `envx:"name=PORT,default=8080"`
+		Debug bool `envx:"name=DEBUG,default=false"`
 	}
 
 	var mu sync.Mutex
@@ -680,8 +680,8 @@ func TestLoadFromEnv_UsesDotEnvAndEnvOverride(t *testing.T) {
 	t.Setenv("PORT", "6000")
 
 	type Config struct {
-		Port int    `default:"7000"`
-		Host string `default:"default"`
+		Port int    `envx:"name=PORT,default=7000"`
+		Host string `envx:"name=HOST,default=default"`
 	}
 
 	cfg, err := LoadFromEnv[Config]()
@@ -716,7 +716,7 @@ func TestMustLoadFromEnv(t *testing.T) {
 	}
 
 	type Config struct {
-		Port int `default:"7000"`
+		Port int `envx:"name=PORT,default=7000"`
 	}
 
 	cfg := MustLoadFromEnv[Config]()
@@ -727,7 +727,7 @@ func TestMustLoadFromEnv(t *testing.T) {
 
 func TestLoaderVersion(t *testing.T) {
 	type Config struct {
-		Port int `default:"8080"`
+		Port int `envx:"name=PORT,default=8080"`
 	}
 
 	loader := NewLoader[Config]()
@@ -786,7 +786,7 @@ func TestWithLogger(t *testing.T) {
 
 func TestPrintUsesStdout(t *testing.T) {
 	type Config struct {
-		Port int `default:"8080"`
+		Port int `envx:"name=PORT,default=8080"`
 	}
 	cfg := &Config{Port: 8080}
 
@@ -999,7 +999,7 @@ func TestMoreCoverageBranches(t *testing.T) {
 
 	values := map[string]any{"PORT": "8080", "HIDDEN": "ignored"}
 	cfg := &Config{}
-	if err := parse(cfg, values, ""); err != nil {
+	if err := parse(cfg, values, "", nil); err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	if cfg.Port != 8080 {
@@ -1009,17 +1009,17 @@ func TestMoreCoverageBranches(t *testing.T) {
 		t.Fatalf("expected hidden field to remain empty, got %q", cfg.hidden)
 	}
 
-	if err := parse(123, values, ""); err == nil {
+	if err := parse(123, values, "", nil); err == nil {
 		t.Fatal("expected parse to fail on non-pointer target")
 	}
 
 	var nilCfg *Config
-	if err := parse(nilCfg, values, ""); err == nil {
+	if err := parse(nilCfg, values, "", nil); err == nil {
 		t.Fatal("expected parse to fail on nil pointer")
 	}
 
 	var notStruct int
-	if err := parse(&notStruct, values, ""); err == nil {
+	if err := parse(&notStruct, values, "", nil); err == nil {
 		t.Fatal("expected parse to fail on non-struct pointer")
 	}
 
@@ -1101,7 +1101,7 @@ func TestLoaderMustLoadPanics(t *testing.T) {
 
 func TestPrintStructNested(t *testing.T) {
 	type Nested struct {
-		Name string `default:"svc"`
+		Name string `envx:"name=NAME,default=svc"`
 	}
 	type Config struct {
 		App  Nested
@@ -1118,12 +1118,12 @@ func TestPrintStructNested(t *testing.T) {
 
 func TestParseStructPrefixAndRequired(t *testing.T) {
 	type Config struct {
-		Port int `required:"true"`
+		Port int `envx:"name=PORT,required=true"`
 	}
 
 	cfg := &Config{}
 	values := map[string]any{"APP_PORT": "8088"}
-	if err := parse(cfg, values, "APP"); err != nil {
+	if err := parse(cfg, values, "APP", nil); err != nil {
 		t.Fatalf("parse with prefix: %v", err)
 	}
 	if cfg.Port != 8088 {
@@ -1150,7 +1150,7 @@ func TestParseStructNestedAndNilValue(t *testing.T) {
 		"PORT":      nil,
 		"NEST_NAME": "svc",
 	}
-	if err := parse(cfg, values, ""); err != nil {
+	if err := parse(cfg, values, "", nil); err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	if cfg.Nest.Name != "svc" {
@@ -1164,7 +1164,7 @@ func TestParseStructNestedAndNilValue(t *testing.T) {
 func TestValidateRequiredNested(t *testing.T) {
 	type Config struct {
 		Nest struct {
-			Token string `required:"true"`
+			Token string `envx:"name=TOKEN,required=true"`
 		}
 	}
 
@@ -1180,7 +1180,7 @@ func TestValidateRequiredNested(t *testing.T) {
 
 func TestReloadConfigBranches(t *testing.T) {
 	type Config struct {
-		Port int `default:"8080"`
+		Port int `envx:"name=PORT,default=8080"`
 	}
 
 	loader := NewLoader[Config](WithProvider(Defaults[Config]()))
@@ -1215,7 +1215,7 @@ func TestFileProviderReadError(t *testing.T) {
 
 func TestStartWatchingNoPathAndTwice(t *testing.T) {
 	type Config struct {
-		Port int `default:"8080"`
+		Port int `envx:"name=PORT,default=8080"`
 	}
 
 	loader := NewLoader[Config]()
@@ -1258,7 +1258,7 @@ func TestLoadInternalErrors(t *testing.T) {
 	}
 
 	type Validated struct {
-		Port int `default:"8080"`
+		Port int `envx:"name=PORT,default=8080"`
 	}
 
 	if _, err := Load[Validated](
@@ -1294,7 +1294,7 @@ func TestParseStructNestedError(t *testing.T) {
 
 	cfg := &Config{}
 	values := map[string]any{"NEST_BAD": "1"}
-	if err := parse(cfg, values, ""); err == nil {
+	if err := parse(cfg, values, "", nil); err == nil {
 		t.Fatal("expected parse to fail for nested unsupported type")
 	}
 }

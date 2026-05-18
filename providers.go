@@ -66,16 +66,29 @@ func extractDefaults(t reflect.Type, path string) map[string]string {
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 
+		tag := parseEnvxTag(field.Tag.Get("envx"))
+		if tag.Skip {
+			continue
+		}
+
 		if field.Type.Kind() == reflect.Struct && field.Type != reflect.TypeOf(time.Time{}) {
-			nestedPath := path + toScreamingSnake(field.Name) + "_"
+			nestedName := toScreamingSnake(field.Name)
+			if tag.Name != "" {
+				nestedName = tag.Name
+			}
+			nestedPath := path + nestedName + "_"
 			for k, v := range extractDefaults(field.Type, nestedPath) {
 				values[k] = v
 			}
 			continue
 		}
 
-		if def := field.Tag.Get("default"); def != "" {
-			values[path+toScreamingSnake(field.Name)] = def
+		if tag.HasDefault {
+			name := toScreamingSnake(field.Name)
+			if tag.Name != "" {
+				name = tag.Name
+			}
+			values[path+name] = tag.Default
 		}
 	}
 	return values

@@ -43,7 +43,7 @@ func loadInternal[T any](opts ...Option) (map[string]any, *T, error) {
 	}
 
 	var cfg T
-	if err := parse(&cfg, values, o.prefix); err != nil {
+	if err := parse(&cfg, values, o.prefix, o.logger); err != nil {
 		return nil, nil, err
 	}
 

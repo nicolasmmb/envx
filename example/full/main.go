@@ -13,22 +13,22 @@ import (
 // Config demonstrates most envx features in one place.
 type Config struct {
 	App struct {
-		Name string `default:"envx"`
-		Env  string `default:"local"`
-		Port int    `default:"8080"`
+		Name string `envx:"name=NAME,default=envx"`
+		Env  string `envx:"name=ENV,default=local"`
+		Port int    `envx:"name=PORT,default=8080"`
 	}
 
 	Database struct {
-		URL      string `required:"true" secret:"true"`
-		MaxConns int    `default:"10"`
+		URL      string `envx:"name=DATABASE_URL,required=true,secret=true"`
+		MaxConns int    `envx:"name=MAX_CONNS,default=10"`
 	}
 
 	Features struct {
-		Debug          bool     `default:"false"`
-		AllowedOrigins []string `default:"http://localhost:3000"`
+		Debug          bool     `envx:"name=DEBUG,default=false"`
+		AllowedOrigins []string `envx:"name=ALLOWED_ORIGINS,default=http://localhost:3000"`
 	}
 
-	ShutdownGrace time.Duration `default:"10s"`
+	ShutdownGrace time.Duration `envx:"name=SHUTDOWN_GRACE,default=10s"`
 }
 
 func main() {

@@ -9,15 +9,15 @@ import (
 )
 
 type Config struct {
-	Port int    `default:"8080"`
-	Host string `default:"0.0.0.0"`
+	Port int    `envx:"name=PORT,default=8080"`
+	Host string `envx:"name=HOST,default=0.0.0.0"`
 
-	DatabaseURL string `required:"true" secret:"true"`
+	DatabaseURL string `envx:"name=DATABASE_URL,required=true,secret=true"`
 
-	Debug   bool          `default:"false"`
-	Timeout time.Duration `default:"30s"`
+	Debug   bool          `envx:"name=DEBUG,default=false"`
+	Timeout time.Duration `envx:"name=TIMEOUT,default=30s"`
 
-	AllowedOrigins []string `default:"http://localhost:3000"`
+	AllowedOrigins []string `envx:"name=ALLOWED_ORIGINS,default=http://localhost:3000"`
 }
 
 func main() {

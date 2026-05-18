@@ -24,10 +24,10 @@
 
 ```go
 type Config struct {
-    Port        int           `default:"8080"`
-    DatabaseURL string        `required:"true"`
-    JWTSecret   string        `secret:"true"`
-    Timeout     time.Duration `default:"30s"`
+    Port        int           `envx:"name=PORT,default=8080"`
+    DatabaseURL string        `envx:"name=DATABASE_URL,required=true"`
+    JWTSecret   string        `envx:"name=JWT_SECRET,secret=true"`
+    Timeout     time.Duration `envx:"name=TIMEOUT,default=30s"`
 }
 
 cfg := envx.MustLoad[Config]()
@@ -96,9 +96,9 @@ import (
 )
 
 type Config struct {
-    Port        int    `default:"8080"`
-    DatabaseURL string `required:"true"`
-    Debug       bool   `default:"false"`
+    Port        int    `envx:"name=PORT,default=8080"`
+    DatabaseURL string `envx:"name=DATABASE_URL,required=true"`
+    Debug       bool   `envx:"name=DEBUG,default=false"`
 }
 
 func main() {
@@ -127,8 +127,8 @@ go run main.go
 
 ```go
 type Config struct {
-    Port        int    `default:"8080"`
-    DatabaseURL string `required:"true"`
+    Port        int    `envx:"name=PORT,default=8080"`
+    DatabaseURL string `envx:"name=DATABASE_URL,required=true"`
 }
 
 cfg := envx.MustLoadFromEnv[Config]()
@@ -138,7 +138,7 @@ cfg := envx.MustLoadFromEnv[Config]()
 
 ```go
 type Config struct {
-    Port int `default:"8080"`
+    Port int `envx:"name=PORT,default=8080"`
 }
 
 cfg := envx.MustLoad[Config](
@@ -151,7 +151,7 @@ cfg := envx.MustLoad[Config](
 
 ```go
 type Config struct {
-    Port int `default:"8080"`
+    Port int `envx:"name=PORT,default=8080"`
 }
 
 cfg := envx.MustLoad[Config](
@@ -164,7 +164,7 @@ cfg := envx.MustLoad[Config](
 
 ```go
 type Config struct {
-    Port int `default:"8080"`
+    Port int `envx:"name=PORT,default=8080"`
 }
 
 cfg := envx.MustLoad[Config](
@@ -197,9 +197,9 @@ defer loader.StopWatching()
 
 | Tag | Description | Example |
 |:----|:------------|:--------|
-| `default` | Default value | `default:"8080"` |
-| `required` | Must be set | `required:"true"` |
-| `secret` | Mask in logs | `secret:"true"` |
+| `envx` | Unified config tag | `envx:"name=PORT,required=true,secret=true,default=8080"` |
+
+Use `envx:"-"` to ignore a field.
 
 ### Supported Types
 
@@ -218,12 +218,12 @@ defer loader.StopWatching()
 ```go
 type Config struct {
     Server struct {
-        Host string `default:"0.0.0.0"`
-        Port int    `default:"8080"`
+        Host string `envx:"name=HOST,default=0.0.0.0"`
+        Port int    `envx:"name=PORT,default=8080"`
     }
     Database struct {
-        URL      string `required:"true"`
-        PoolSize int    `default:"10"`
+        URL      string `envx:"name=DATABASE_URL,required=true"`
+        PoolSize int    `envx:"name=POOL_SIZE,default=10"`
     }
 }
 ```
@@ -332,7 +332,7 @@ DEBUG                     = false
 ──────────────────────────────────────────────────
 ```
 
-> 🔐 Secrets are automatically masked based on field name or `secret:"true"` tag.
+> 🔐 Secrets are automatically masked based on field name or `envx:"name=JWT_SECRET,secret=true"` tag.
 
 ---
 
@@ -360,24 +360,24 @@ DEBUG                     = false
 ```go
 type Config struct {
     Server struct {
-        Host         string        `default:"0.0.0.0"`
-        Port         int           `default:"8080"`
-        ReadTimeout  time.Duration `default:"5s"`
-        WriteTimeout time.Duration `default:"10s"`
+        Host         string        `envx:"name=HOST,default=0.0.0.0"`
+        Port         int           `envx:"name=PORT,default=8080"`
+        ReadTimeout  time.Duration `envx:"name=READ_TIMEOUT,default=5s"`
+        WriteTimeout time.Duration `envx:"name=WRITE_TIMEOUT,default=10s"`
     }
     Database struct {
-        URL         string `required:"true" secret:"true"`
-        MaxConns    int    `default:"25"`
-        MaxIdleTime time.Duration `default:"5m"`
+        URL         string `envx:"name=DATABASE_URL,required=true,secret=true"`
+        MaxConns    int    `envx:"name=MAX_CONNS,default=25"`
+        MaxIdleTime time.Duration `envx:"name=MAX_IDLE_TIME,default=5m"`
     }
     Auth struct {
-        JWTSecret     string        `required:"true" secret:"true"`
-        TokenExpiry   time.Duration `default:"24h"`
-        RefreshExpiry time.Duration `default:"168h"`
+        JWTSecret     string        `envx:"name=JWT_SECRET,required=true,secret=true"`
+        TokenExpiry   time.Duration `envx:"name=TOKEN_EXPIRY,default=24h"`
+        RefreshExpiry time.Duration `envx:"name=REFRESH_EXPIRY,default=168h"`
     }
     Features struct {
-        Debug      bool     `default:"false"`
-        CORSOrigins []string `default:"http://localhost:3000"`
+        Debug      bool     `envx:"name=DEBUG,default=false"`
+        CORSOrigins []string `envx:"name=CORS_ORIGINS,default=http://localhost:3000"`
     }
 }
 
@@ -396,8 +396,8 @@ func main() {
 
 ```go
 type Config struct {
-    Port     int    `default:"8080"`
-    LogLevel string `default:"info"`
+    Port     int    `envx:"name=PORT,default=8080"`
+    LogLevel string `envx:"name=LOG_LEVEL,default=info"`
 }
 
 func (c *Config) Validate() error {

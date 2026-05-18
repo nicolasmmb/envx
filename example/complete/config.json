@@ -1,0 +1,14 @@
+{
+  "name": "envx-complete",
+  "env": "local",
+  "port": 8080,
+  "database": {
+    "url": "postgres://localhost/envx_complete",
+    "poolSize": 15
+  },
+  "features": {
+    "debug": true,
+    "allowedOrigins": ["http://localhost:3000", "http://localhost:5173"]
+  },
+  "shutdownGrace": "15s"
+}

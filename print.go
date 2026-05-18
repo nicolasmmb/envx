@@ -30,6 +30,11 @@ func printStruct(w io.Writer, v reflect.Value, t reflect.Type, indent string) {
 		field := t.Field(i)
 		fv := v.Field(i)
 
+		tag := parseEnvxTag(field.Tag.Get("envx"))
+		if tag.Skip {
+			continue
+		}
+
 		if field.Type.Kind() == reflect.Struct && field.Type != reflect.TypeOf(time.Time{}) {
 			fmt.Fprintf(w, "%s%s:\n", indent, field.Name)
 			printStruct(w, fv, field.Type, indent+"  ")
@@ -37,9 +42,12 @@ func printStruct(w io.Writer, v reflect.Value, t reflect.Type, indent string) {
 		}
 
 		name := toScreamingSnake(field.Name)
+		if tag.Name != "" {
+			name = tag.Name
+		}
 		val := fmt.Sprintf("%v", fv.Interface())
 
-		if isSecret(field) && len(val) > 0 {
+		if isSecret(field, tag) && len(val) > 0 {
 			val = maskSecretValue(val)
 		}
 
@@ -54,8 +62,8 @@ func maskSecretValue(val string) string {
 	return val[:3] + "***" + val[len(val)-3:]
 }
 
-func isSecret(field reflect.StructField) bool {
-	if field.Tag.Get("secret") == "true" {
+func isSecret(field reflect.StructField, tag envxTag) bool {
+	if tag.Secret {
 		return true
 	}
 	upper := strings.ToUpper(field.Name)
