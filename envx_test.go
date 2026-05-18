@@ -46,6 +46,16 @@ func (b *lockedBuffer) Bytes() []byte {
 	return b.buf.Bytes()
 }
 
+func mustLoadForTest[T any](t *testing.T, loader *Loader[T]) *T {
+	t.Helper()
+
+	cfg, err := loader.Load()
+	if err != nil {
+		t.Fatalf("unexpected load error: %v", err)
+	}
+	return cfg
+}
+
 func TestLoad_Defaults(t *testing.T) {
 	type Config struct {
 		Port    int           `envx:"name=PORT,default=8080"`
@@ -96,6 +106,79 @@ func TestLoad_Env(t *testing.T) {
 	}
 	if !cfg.Debug {
 		t.Error("Debug = false, want true")
+	}
+}
+
+func TestLoad_EnumValid(t *testing.T) {
+	t.Setenv("APP_ENV", "prod")
+
+	type Config struct {
+		Env string `envx:"name=APP_ENV,enum=\"dev,staging,prod\""`
+	}
+
+	cfg, err := Load[Config]()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Env != "prod" {
+		t.Fatalf("Env = %s, want prod", cfg.Env)
+	}
+}
+
+func TestLoad_EnumInvalid(t *testing.T) {
+	t.Setenv("APP_ENV", "broken")
+
+	type Config struct {
+		Env string `envx:"name=APP_ENV,enum=\"dev,staging,prod\""`
+	}
+
+	_, err := Load[Config]()
+	if err == nil {
+		t.Fatal("expected enum validation error")
+	}
+	if !errors.Is(err, ErrParse) {
+		t.Fatalf("expected ErrParse, got %v", err)
+	}
+}
+
+func TestLoad_EnumNonString(t *testing.T) {
+	t.Setenv("LEVEL", "1")
+
+	type Config struct {
+		Level int `envx:"name=LEVEL,enum=\"1,2\""`
+	}
+
+	_, err := Load[Config]()
+	if err == nil {
+		t.Fatal("expected enum type error")
+	}
+	if !errors.Is(err, ErrParse) {
+		t.Fatalf("expected ErrParse, got %v", err)
+	}
+}
+
+func TestLoad_DeprecatedLogs(t *testing.T) {
+	t.Setenv("OLD_TOKEN", "deprecated")
+
+	type Config struct {
+		OldToken string `envx:"name=OLD_TOKEN,deprecated=true"`
+	}
+
+	logger := &testLogger{}
+	_, err := Load[Config](WithLogger(logger))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	found := false
+	for _, msg := range logger.msgs {
+		if strings.Contains(msg, "deprecated key used") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected deprecated warning to be logged")
 	}
 }
 
@@ -349,7 +432,7 @@ func TestLoader_ReloadErrorIsLogged(t *testing.T) {
 		}),
 	)
 
-	loader.MustLoad()
+	mustLoadForTest(t, loader)
 	if err := loader.StartWatching(); err != nil {
 		t.Fatalf("start watching: %v", err)
 	}
@@ -385,7 +468,6 @@ func TestLoad_WithProvider(t *testing.T) {
 	}
 
 	cfg, err := Load[Config](
-		WithProvider(Defaults[Config]()),
 		WithProvider(Map(map[string]string{
 			"PORT": "5000",
 			"HOST": "0.0.0.0",
@@ -400,6 +482,77 @@ func TestLoad_WithProvider(t *testing.T) {
 	}
 	if cfg.Host != "0.0.0.0" {
 		t.Errorf("Host = %s, want 0.0.0.0", cfg.Host)
+	}
+}
+
+func TestLoad_PrecedenceEnvWinsByDefault(t *testing.T) {
+	dir := t.TempDir()
+	oldwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	defer func() {
+		if chErr := os.Chdir(oldwd); chErr != nil {
+			t.Fatalf("restore cwd: %v", chErr)
+		}
+	}()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	if err := os.WriteFile(".env", []byte("PORT=5000\n"), 0644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+	t.Setenv("PORT", "6000")
+
+	type Config struct {
+		Port int `envx:"name=PORT,default=7000"`
+	}
+
+	cfg, err := Load[Config](
+		WithProvider(Map(map[string]string{"PORT": "4000"})),
+	)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Port != 6000 {
+		t.Fatalf("expected env to win with port 6000, got %d", cfg.Port)
+	}
+}
+
+func TestLoad_PrecedenceCustomWins(t *testing.T) {
+	dir := t.TempDir()
+	oldwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	defer func() {
+		if chErr := os.Chdir(oldwd); chErr != nil {
+			t.Fatalf("restore cwd: %v", chErr)
+		}
+	}()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	if err := os.WriteFile(".env", []byte("PORT=5000\n"), 0644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+	t.Setenv("PORT", "6000")
+
+	type Config struct {
+		Port int `envx:"name=PORT,default=7000"`
+	}
+
+	cfg, err := Load[Config](
+		WithPrecedence(PrecedenceCustomWins),
+		WithProvider(Map(map[string]string{"PORT": "4000"})),
+	)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Port != 4000 {
+		t.Fatalf("expected custom provider to win with port 4000, got %d", cfg.Port)
 	}
 }
 
@@ -574,7 +727,7 @@ func TestLoader_OnReload(t *testing.T) {
 	)
 
 	// Initial load
-	loader.MustLoad()
+	mustLoadForTest(t, loader)
 	if err := loader.StartWatching(); err != nil {
 		t.Fatalf("start watching: %v", err)
 	}
@@ -616,7 +769,7 @@ func TestLoader_StartWatchingInvalidInterval(t *testing.T) {
 	}
 
 	loader := NewLoader[Config](WithWatch(tmpfile, 0), WithProvider(File(tmpfile)))
-	loader.MustLoad()
+	mustLoadForTest(t, loader)
 
 	if err := loader.StartWatching(); err == nil {
 		t.Fatal("expected error for non-positive watch interval")
@@ -659,7 +812,7 @@ func (l *testLogger) Printf(format string, args ...any) {
 	l.msgs = append(l.msgs, fmt.Sprintf(format, args...))
 }
 
-func TestLoadFromEnv_UsesDotEnvAndEnvOverride(t *testing.T) {
+func TestLoad_UsesDotEnvAndEnvOverride(t *testing.T) {
 	dir := t.TempDir()
 	oldwd, err := os.Getwd()
 	if err != nil {
@@ -684,9 +837,9 @@ func TestLoadFromEnv_UsesDotEnvAndEnvOverride(t *testing.T) {
 		Host string `envx:"name=HOST,default=default"`
 	}
 
-	cfg, err := LoadFromEnv[Config]()
+	cfg, err := Load[Config]()
 	if err != nil {
-		t.Fatalf("LoadFromEnv: %v", err)
+		t.Fatalf("Load: %v", err)
 	}
 	if cfg.Port != 6000 {
 		t.Fatalf("expected env override port 6000, got %d", cfg.Port)
@@ -696,7 +849,7 @@ func TestLoadFromEnv_UsesDotEnvAndEnvOverride(t *testing.T) {
 	}
 }
 
-func TestMustLoadFromEnv(t *testing.T) {
+func TestMustLoad_UsesDotEnv(t *testing.T) {
 	dir := t.TempDir()
 	oldwd, err := os.Getwd()
 	if err != nil {
@@ -719,7 +872,7 @@ func TestMustLoadFromEnv(t *testing.T) {
 		Port int `envx:"name=PORT,default=7000"`
 	}
 
-	cfg := MustLoadFromEnv[Config]()
+	cfg := MustLoad[Config]()
 	if cfg.Port != 5050 {
 		t.Fatalf("expected port from dotenv, got %d", cfg.Port)
 	}
@@ -735,7 +888,7 @@ func TestLoaderVersion(t *testing.T) {
 		t.Fatalf("expected version 0 before load, got %d", loader.Version())
 	}
 
-	loader.MustLoad()
+	mustLoadForTest(t, loader)
 	if loader.Version() != 1 {
 		t.Fatalf("expected version 1 after load, got %d", loader.Version())
 	}
@@ -774,7 +927,7 @@ func TestWithLogger(t *testing.T) {
 		WithProvider(File(tmpfile)),
 		WithWatch(tmpfile, 0),
 	)
-	loader.MustLoad()
+	mustLoadForTest(t, loader)
 
 	if err := loader.StartWatching(); err == nil {
 		t.Fatal("expected error for non-positive watch interval")
@@ -1075,28 +1228,24 @@ func TestMoreCoverageBranches(t *testing.T) {
 	}
 }
 
-func TestMustLoadFromEnvPanics(t *testing.T) {
+func TestMustLoadPanicsOnInvalidType(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {
-			t.Fatal("expected MustLoadFromEnv to panic on invalid type")
+			t.Fatal("expected MustLoad to panic on invalid type")
 		}
 	}()
-	_ = MustLoadFromEnv[int]()
+	_ = MustLoad[int]()
 }
 
-func TestLoaderMustLoadPanics(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected Loader.MustLoad to panic on provider error")
-		}
-	}()
-
+func TestLoaderLoadReturnsError(t *testing.T) {
 	type Config struct {
 		Port int
 	}
 
 	loader := NewLoader[Config](WithProvider(failingProvider{}))
-	_ = loader.MustLoad()
+	if _, err := loader.Load(); err == nil {
+		t.Fatal("expected Loader.Load to return provider error")
+	}
 }
 
 func TestPrintStructNested(t *testing.T) {
@@ -1184,7 +1333,7 @@ func TestReloadConfigBranches(t *testing.T) {
 	}
 
 	loader := NewLoader[Config](WithProvider(Defaults[Config]()))
-	loader.MustLoad()
+	mustLoadForTest(t, loader)
 
 	loader.opts = []Option{WithProvider(Defaults[Config]())}
 	o := defaultOptions()
@@ -1228,7 +1377,7 @@ func TestStartWatchingNoPathAndTwice(t *testing.T) {
 		t.Fatal(err)
 	}
 	loader = NewLoader[Config](WithProvider(File(tmpfile)), WithWatch(tmpfile, 10*time.Millisecond))
-	loader.MustLoad()
+	mustLoadForTest(t, loader)
 	if err := loader.StartWatching(); err != nil {
 		t.Fatalf("start watching: %v", err)
 	}
@@ -1279,7 +1428,7 @@ func TestParseStructNonSettable(t *testing.T) {
 	}
 
 	v := reflect.ValueOf(Config{})
-	if err := parseStruct(v, v.Type(), "", map[string]any{"PORT": "8080"}, ""); err != nil {
+	if err := parseStruct(v, v.Type(), "", map[string]any{"PORT": "8080"}, "", nil); err != nil {
 		t.Fatalf("parseStruct non-settable: %v", err)
 	}
 }

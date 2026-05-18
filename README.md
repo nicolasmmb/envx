@@ -102,7 +102,7 @@ type Config struct {
 }
 
 func main() {
-    cfg, err := envx.LoadFromEnv[Config]() // defaults + .env + environment
+    cfg, err := envx.Load[Config]() // defaults + .env + environment
     if err != nil {
         panic(err)
     }
@@ -131,7 +131,7 @@ type Config struct {
     DatabaseURL string `envx:"name=DATABASE_URL,required=true"`
 }
 
-cfg := envx.MustLoadFromEnv[Config]()
+cfg := envx.MustLoad[Config]()
 ```
 
 ### 2) JSON file + Environment
@@ -143,7 +143,6 @@ type Config struct {
 
 cfg := envx.MustLoad[Config](
     envx.WithProvider(envx.File("config.json")),
-    envx.WithProvider(envx.Env()), // env overrides JSON
 )
 ```
 
@@ -188,10 +187,21 @@ loader := envx.NewLoader[Config](
     }),
 )
 
-cfg := loader.MustLoad()
+cfg, err := loader.Load()
+if err != nil {
+    log.Fatal(err)
+}
 _ = loader.StartWatching()
 defer loader.StopWatching()
 ```
+
+### 6) Complete End-to-End Setup
+
+See `example/complete/main.go` for a full setup with:
+- prefix + defaults + `.env` + environment
+- custom provider + precedence mode
+- type-safe validator
+- hot reload callbacks (`OnReload` + `OnReloadError`)
 
 ### Struct Tags
 
@@ -200,6 +210,7 @@ defer loader.StopWatching()
 | `envx` | Unified config tag | `envx:"name=PORT,required=true,secret=true,default=8080"` |
 
 Use `envx:"-"` to ignore a field.
+Use `enum="a,b,c"` for allowed values and `deprecated=true` to log a warning when a key is used.
 
 ### Supported Types
 
@@ -254,12 +265,25 @@ cfg, _ := envx.Load[Config](
 ### Multiple Sources
 
 ```go
-cfg, _ := envx.LoadFromEnv[Config](            // Defaults + .env + environment
+cfg, _ := envx.Load[Config](                   // Defaults + .env + environment
     envx.WithProvider(envx.File("config.json")), // optional file
 )
 ```
 
-> `LoadFromEnv` gives you a conventional stack: struct defaults → `.env` → environment (highest priority).
+> `Load` gives you a conventional stack: struct defaults → `.env` → environment (highest priority).
+
+### Precedence Control
+
+```go
+cfg, _ := envx.Load[Config](
+    envx.WithPrecedence(envx.PrecedenceCustomWins),
+    envx.WithProvider(envx.Map(map[string]string{
+        "PORT": "9000",
+    })),
+)
+```
+
+By default, `PrecedenceEnvWins` is used. Set `PrecedenceCustomWins` when custom providers should override environment variables.
 
 ### Custom Validation
 
@@ -285,7 +309,10 @@ loader := envx.NewLoader[Config](
     }),
 )
 
-cfg := loader.MustLoad()
+cfg, err := loader.Load()
+if err != nil {
+    log.Fatalf("failed to load config: %v", err)
+}
 if err := loader.StartWatching(); err != nil {
     log.Fatalf("failed to watch config: %v", err)
 }
@@ -302,9 +329,9 @@ type VaultProvider struct {
     Address string
 }
 
-func (p *VaultProvider) Values() (map[string]string, error) {
+func (p *VaultProvider) Values() (map[string]any, error) {
     // Fetch from Vault, AWS SSM, etc.
-    return map[string]string{
+    return map[string]any{
         "JWT_SECRET": "secret-from-vault",
     }, nil
 }
@@ -392,6 +419,24 @@ func main() {
 </details>
 
 <details>
+<summary><b>Vault Provider</b></summary>
+
+See `example/vault/main.go`:
+
+```go
+type Config struct {
+    DatabaseURL string `envx:"name=DATABASE_URL,required=true"`
+    AppEnv      string `envx:"name=APP_ENV,enum=\"dev,staging,prod\""`
+    LegacyToken string `envx:"name=LEGACY_TOKEN,deprecated=true"`
+}
+
+cfg, _ := envx.Load[Config](
+    envx.WithProvider(&vaultProvider{client: client, path: "app/config"}),
+)
+```
+</details>
+
+<details>
 <summary><b>With Validation</b></summary>
 
 ```go
@@ -430,35 +475,47 @@ func main() {
 func loadConfig() *Config {
     env := os.Getenv("APP_ENV")
     
-    loader := envx.NewLoader[Config](
-        envx.WithProvider(envx.Defaults[Config]()),
-    )
+    loader := envx.NewLoader[Config]()
     
     // Load environment-specific file
     switch env {
     case "production":
         loader = envx.NewLoader[Config](
-            envx.WithProvider(envx.Defaults[Config]()),
             envx.WithProvider(envx.File("config.prod.json")),
-            envx.WithProvider(envx.Env()),
         )
     case "staging":
         loader = envx.NewLoader[Config](
-            envx.WithProvider(envx.Defaults[Config]()),
             envx.WithProvider(envx.File("config.staging.json")),
-            envx.WithProvider(envx.Env()),
         )
     default:
         loader = envx.NewLoader[Config](
-            envx.WithProvider(envx.Defaults[Config]()),
             envx.WithProvider(envx.File("config.local.json")),
-            envx.WithProvider(envx.Env()),
         )
     }
-    
-    return loader.MustLoad()
+
+    cfg, err := loader.Load()
+    if err != nil {
+        log.Fatalf("config load failed: %v", err)
+    }
+    return cfg
 }
 ```
+
+</details>
+
+<details>
+<summary><b>Complete Example (prefix + precedence + reload)</b></summary>
+
+See `example/complete/main.go` and `example/complete/config.json`:
+
+```bash
+APP_DATABASE_URL=postgres://localhost/envx_complete go run ./example/complete
+```
+
+The example shows:
+- default stack (`defaults -> .env -> env`)
+- `WithPrecedence(...)` for custom provider ordering
+- validation + reload callbacks + graceful shutdown
 
 </details>
 
@@ -470,9 +527,7 @@ See `example/full/main.go`:
 ```go
 loader := envx.NewLoader[Config](
     envx.WithPrefix("APP"),                       // strict prefix
-    envx.WithProvider(envx.DefaultsWithPrefix[Config]("APP")), // defaults (auto-prefixed)
     envx.WithProvider(envx.File("config.json")),                // optional JSON/.env
-    envx.WithProvider(envx.Env()),                              // environment
     envx.WithValidator(func(cfg *Config) error { // type-safe validator
         if cfg.App.Port < 1024 {
             return fmt.Errorf("APP_PORT must be >= 1024")
@@ -485,7 +540,10 @@ loader := envx.NewLoader[Config](
     envx.WithWatch("config.json", 2*time.Second), // hot reload
 )
 
-cfg := loader.MustLoad()
+cfg, err := loader.Load()
+if err != nil {
+    log.Fatalf("failed to load config: %v", err)
+}
 envx.Print(cfg)
 
 if err := loader.StartWatching(); err != nil {
@@ -512,8 +570,6 @@ APP_DATABASE_URL=postgres://db/prod go run ./example/full
 ```go
 cfg, err := envx.Load[T](opts...)    // Load with error
 cfg := envx.MustLoad[T](opts...)      // Load or panic
-cfg, err := envx.LoadFromEnv[T](opts...) // Defaults + .env + environment
-cfg := envx.MustLoadFromEnv[T](opts...)  // Panic version
 ```
 
 > ℹ️ `T` must be a struct type; passing primitives or pointer types returns `ErrUnsupportedType`.
@@ -523,12 +579,18 @@ cfg := envx.MustLoadFromEnv[T](opts...)  // Panic version
 ```go
 envx.WithPrefix(prefix)        // Env var prefix
 envx.WithProvider(p)           // Add provider
+envx.WithPrecedence(mode)      // Precedence between env and custom providers
 envx.WithValidator(fn)         // Custom validator (type-safe)
 envx.WithWatch(path, interval) // File watching
 envx.WithOnReload(fn)          // Reload callback
 envx.WithOnReloadError(fn)     // Reload error callback
 envx.WithLogger(logger)        // Custom logger (implements Printf)
 envx.WithOutput(w)             // Convenience to log to a writer
+```
+
+```go
+envx.PrecedenceEnvWins
+envx.PrecedenceCustomWins
 ```
 
 > 🔁 File watching starts only when the initial load succeeds and the interval is greater than zero.
@@ -547,7 +609,6 @@ envx.Map(m)                    // String map
 ```go
 loader := envx.NewLoader[T](opts...)
 loader.Load()          // Load config
-loader.MustLoad()      // Load or panic
 loader.Get()           // Get current config
 loader.Version()       // Get version number
 loader.StartWatching() // Start file watcher (returns error)

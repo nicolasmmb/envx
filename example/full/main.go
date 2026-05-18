@@ -14,12 +14,12 @@ import (
 type Config struct {
 	App struct {
 		Name string `envx:"name=NAME,default=envx"`
-		Env  string `envx:"name=ENV,default=local"`
+		Env  string `envx:"name=ENV,default=local,enum=\"local,staging,production\""`
 		Port int    `envx:"name=PORT,default=8080"`
 	}
 
 	Database struct {
-		URL      string `envx:"name=DATABASE_URL,required=true,secret=true"`
+		URL      string `envx:"name=URL,required=true,secret=true"`
 		MaxConns int    `envx:"name=MAX_CONNS,default=10"`
 	}
 
@@ -37,9 +37,7 @@ func main() {
 	loader := envx.NewLoader[Config](
 		envx.WithLogger(logger),
 		envx.WithPrefix("APP"),
-		envx.WithProvider(envx.DefaultsWithPrefix[Config]("APP")),
 		envx.WithProvider(envx.File("config.json")), // optional JSON/.env file
-		envx.WithProvider(envx.Env()),               // environment
 		envx.WithValidator(func(cfg *Config) error {
 			if cfg.App.Port < 1024 {
 				return errors.New("APP_PORT must be >= 1024")
@@ -52,7 +50,10 @@ func main() {
 		envx.WithWatch("config.json", 2*time.Second),
 	)
 
-	cfg := loader.MustLoad()
+	cfg, err := loader.Load()
+	if err != nil {
+		logger.Fatalf("failed to load config: %v", err)
+	}
 	envx.Print(cfg)
 
 	if err := loader.StartWatching(); err != nil {

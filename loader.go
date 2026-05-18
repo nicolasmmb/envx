@@ -13,17 +13,6 @@ func Load[T any](opts ...Option) (*T, error) {
 	return cfg, err
 }
 
-func LoadFromEnv[T any](opts ...Option) (*T, error) {
-	withEnv := func(o *options) {
-		o.providers = append([]Provider{
-			DefaultsWithPrefix[T](o.prefix),
-			File(".env"),
-			Env(),
-		}, o.providers...)
-	}
-	return Load[T](append(opts, withEnv)...)
-}
-
 func loadInternal[T any](opts ...Option) (map[string]any, *T, error) {
 	o := prepareOptions[T](opts)
 
@@ -75,12 +64,20 @@ func finalizeOptions[T any](o *options) {
 	if o.logger == nil {
 		o.logger = newWriterLogger(os.Stdout)
 	}
-	if len(o.providers) == 0 {
-		o.providers = []Provider{
-			DefaultsWithPrefix[T](o.prefix),
-			Env(),
-		}
+
+	customProviders := o.providers
+	baseProviders := []Provider{
+		DefaultsWithPrefix[T](o.prefix),
+		File(".env"),
 	}
+	if o.precedence == PrecedenceCustomWins {
+		o.providers = append(baseProviders, Env())
+		o.providers = append(o.providers, customProviders...)
+		return
+	}
+
+	o.providers = append(baseProviders, customProviders...)
+	o.providers = append(o.providers, Env())
 }
 
 func (l *Loader[T]) reloadConfig(o *options) {
@@ -147,14 +144,6 @@ func MustLoad[T any](opts ...Option) *T {
 	return cfg
 }
 
-func MustLoadFromEnv[T any](opts ...Option) *T {
-	cfg, err := LoadFromEnv[T](opts...)
-	if err != nil {
-		panic(err)
-	}
-	return cfg
-}
-
 type Loader[T any] struct {
 	opts       []Option
 	config     *T
@@ -193,14 +182,6 @@ func (l *Loader[T]) loadLocked() (*T, error) {
 	l.version++
 
 	return cfg, nil
-}
-
-func (l *Loader[T]) MustLoad() *T {
-	cfg, err := l.Load()
-	if err != nil {
-		panic(err)
-	}
-	return cfg
 }
 
 func (l *Loader[T]) Get() *T {

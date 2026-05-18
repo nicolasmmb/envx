@@ -14,14 +14,14 @@ type Config struct {
 
 	DatabaseURL string `envx:"name=DATABASE_URL,required=true,secret=true"`
 
-	Debug   bool          `envx:"name=DEBUG,default=false"`
+	Debug   bool          `envx:"name=DEBUG,default=false,deprecated=true"`
 	Timeout time.Duration `envx:"name=TIMEOUT,default=30s"`
 
 	AllowedOrigins []string `envx:"name=ALLOWED_ORIGINS,default=http://localhost:3000"`
 }
 
 func main() {
-	cfg, err := envx.LoadFromEnv[Config]() // defaults + .env + env vars
+	cfg, err := envx.Load[Config]() // defaults + .env + env vars
 	if err != nil {
 		log.Fatal(err)
 	}

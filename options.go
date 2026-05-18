@@ -11,9 +11,17 @@ import (
 
 type Option func(*options)
 
+type PrecedenceMode int
+
+const (
+	PrecedenceEnvWins PrecedenceMode = iota
+	PrecedenceCustomWins
+)
+
 type options struct {
 	providers     []Provider
 	prefix        string
+	precedence    PrecedenceMode
 	logger        Logger
 	onReload      func(any, any)
 	onReloadError func(error)
@@ -31,6 +39,12 @@ func WithProvider(p Provider) Option {
 func WithPrefix(prefix string) Option {
 	return func(o *options) {
 		o.prefix = strings.ToUpper(prefix)
+	}
+}
+
+func WithPrecedence(mode PrecedenceMode) Option {
+	return func(o *options) {
+		o.precedence = mode
 	}
 }
 
@@ -85,6 +99,7 @@ func WithWatch(path string, interval time.Duration) Option {
 
 func defaultOptions() *options {
 	return &options{
-		logger: newWriterLogger(os.Stdout),
+		logger:     newWriterLogger(os.Stdout),
+		precedence: PrecedenceEnvWins,
 	}
 }
