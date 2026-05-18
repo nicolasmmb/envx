@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 )
@@ -325,9 +326,26 @@ func applyPrefix(values map[string]any, prefix string) map[string]any {
 	if prefix == "" {
 		return values
 	}
+	p := prefix + "_"
 	prefixed := make(map[string]any, len(values))
+
+	// Preserve explicitly prefixed keys first.
 	for k, v := range values {
-		prefixed[prefix+"_"+k] = v
+		if strings.HasPrefix(k, p) {
+			prefixed[k] = v
+		}
+	}
+
+	// Prefix only non-prefixed keys, without overriding explicit ones.
+	for k, v := range values {
+		if strings.HasPrefix(k, p) {
+			continue
+		}
+		target := p + k
+		if _, exists := prefixed[target]; exists {
+			continue
+		}
+		prefixed[target] = v
 	}
 	return prefixed
 }
