@@ -53,6 +53,26 @@ func parseStruct(v reflect.Value, t reflect.Type, path string, values map[string
 			}
 			continue
 		}
+		if field.Type.Kind() == reflect.Pointer && field.Type.Elem().Kind() == reflect.Struct && field.Type.Elem() != reflect.TypeOf(time.Time{}) {
+			nestedName := toScreamingSnake(field.Name)
+			if tag.Name != "" {
+				nestedName = tag.Name
+			}
+			nestedPath := path + nestedName + "_"
+			nestedKeyPrefix := withPrefix(prefix, nestedPath)
+
+			if fv.IsNil() {
+				if !hasAnyKeyWithPrefix(values, nestedKeyPrefix) {
+					continue
+				}
+				fv.Set(reflect.New(field.Type.Elem()))
+			}
+
+			if err := parseStruct(fv.Elem(), field.Type.Elem(), nestedPath, values, prefix, logger); err != nil {
+				return err
+			}
+			continue
+		}
 
 		key := withPrefix(prefix, fieldKey(path, field.Name, tag.Name))
 
@@ -107,6 +127,25 @@ func checkRequired(v reflect.Value, t reflect.Type, path string, values map[stri
 			}
 			continue
 		}
+		if field.Type.Kind() == reflect.Pointer && field.Type.Elem().Kind() == reflect.Struct && field.Type.Elem() != reflect.TypeOf(time.Time{}) {
+			if fv.IsNil() {
+				if tag.Required {
+					key := withPrefix(prefix, fieldKey(path, field.Name, tag.Name))
+					return &Error{Field: key, Err: ErrRequired}
+				}
+				continue
+			}
+
+			nestedName := toScreamingSnake(field.Name)
+			if tag.Name != "" {
+				nestedName = tag.Name
+			}
+			nestedPath := path + nestedName + "_"
+			if err := checkRequired(fv.Elem(), field.Type.Elem(), nestedPath, values, prefix); err != nil {
+				return err
+			}
+			continue
+		}
 
 		if tag.Required {
 			key := withPrefix(prefix, fieldKey(path, field.Name, tag.Name))
@@ -129,11 +168,24 @@ func requiredMissing(key string, fv reflect.Value, values map[string]any) bool {
 		return true
 	}
 
-	if fv.Kind() == reflect.String && fv.String() == "" {
+	if isEmptyStringValue(fv) {
 		return true
 	}
 
 	return false
+}
+
+func isEmptyStringValue(v reflect.Value) bool {
+	if !v.IsValid() {
+		return true
+	}
+	if v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return true
+		}
+		return isEmptyStringValue(v.Elem())
+	}
+	return v.Kind() == reflect.String && v.String() == ""
 }
 
 func validateEnumValue(key string, fv reflect.Value, allowed []string) error {
@@ -167,6 +219,13 @@ func isZero(v reflect.Value) bool {
 }
 
 func setField(fv reflect.Value, val any) error {
+	if fv.Kind() == reflect.Pointer {
+		if fv.IsNil() {
+			fv.Set(reflect.New(fv.Type().Elem()))
+		}
+		return setField(fv.Elem(), val)
+	}
+
 	switch fv.Kind() {
 	case reflect.String:
 		fv.SetString(fmt.Sprintf("%v", val))
@@ -375,4 +434,13 @@ func withPrefix(prefix, key string) string {
 		return key
 	}
 	return prefix + "_" + key
+}
+
+func hasAnyKeyWithPrefix(values map[string]any, keyPrefix string) bool {
+	for k, v := range values {
+		if strings.HasPrefix(k, keyPrefix) && v != nil {
+			return true
+		}
+	}
+	return false
 }

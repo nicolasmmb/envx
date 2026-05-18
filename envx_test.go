@@ -612,6 +612,123 @@ func TestLoad_Duration(t *testing.T) {
 	}
 }
 
+func TestLoad_PointerPrimitiveFields(t *testing.T) {
+	t.Setenv("PORT", "9001")
+	t.Setenv("DEBUG", "true")
+	t.Setenv("TIMEOUT", "90s")
+	t.Setenv("NAME", "api")
+	t.Setenv("HOSTS", "a,b")
+
+	type Config struct {
+		Port    *int           `envx:"name=PORT"`
+		Debug   *bool          `envx:"name=DEBUG"`
+		Timeout *time.Duration `envx:"name=TIMEOUT"`
+		Name    *string        `envx:"name=NAME"`
+		Hosts   *[]string      `envx:"name=HOSTS"`
+	}
+
+	cfg, err := Load[Config]()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Port == nil || *cfg.Port != 9001 {
+		t.Fatalf("unexpected Port pointer value: %#v", cfg.Port)
+	}
+	if cfg.Debug == nil || !*cfg.Debug {
+		t.Fatalf("unexpected Debug pointer value: %#v", cfg.Debug)
+	}
+	if cfg.Timeout == nil || *cfg.Timeout != 90*time.Second {
+		t.Fatalf("unexpected Timeout pointer value: %#v", cfg.Timeout)
+	}
+	if cfg.Name == nil || *cfg.Name != "api" {
+		t.Fatalf("unexpected Name pointer value: %#v", cfg.Name)
+	}
+	if cfg.Hosts == nil || len(*cfg.Hosts) != 2 || (*cfg.Hosts)[1] != "b" {
+		t.Fatalf("unexpected Hosts pointer value: %#v", cfg.Hosts)
+	}
+}
+
+func TestLoad_PointerFieldsWithDefaults(t *testing.T) {
+	type Config struct {
+		Port    *int           `envx:"name=PORT,default=8080"`
+		Debug   *bool          `envx:"name=DEBUG,default=true"`
+		Timeout *time.Duration `envx:"name=TIMEOUT,default=45s"`
+		Name    *string        `envx:"name=NAME,default=svc"`
+	}
+
+	cfg, err := Load[Config]()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Port == nil || *cfg.Port != 8080 {
+		t.Fatalf("unexpected Port default: %#v", cfg.Port)
+	}
+	if cfg.Debug == nil || !*cfg.Debug {
+		t.Fatalf("unexpected Debug default: %#v", cfg.Debug)
+	}
+	if cfg.Timeout == nil || *cfg.Timeout != 45*time.Second {
+		t.Fatalf("unexpected Timeout default: %#v", cfg.Timeout)
+	}
+	if cfg.Name == nil || *cfg.Name != "svc" {
+		t.Fatalf("unexpected Name default: %#v", cfg.Name)
+	}
+}
+
+func TestLoad_PointerNestedStruct(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://localhost/db")
+
+	type Config struct {
+		Database *struct {
+			URL string `envx:"name=URL,required=true"`
+		}
+	}
+
+	cfg, err := Load[Config]()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Database == nil {
+		t.Fatal("expected Database pointer to be allocated")
+	}
+	if cfg.Database.URL != "postgres://localhost/db" {
+		t.Fatalf("unexpected Database.URL: %q", cfg.Database.URL)
+	}
+}
+
+func TestLoad_PointerNestedStructRemainsNilWhenMissing(t *testing.T) {
+	type Config struct {
+		Database *struct {
+			URL string `envx:"name=URL"`
+		}
+	}
+
+	cfg, err := Load[Config]()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Database != nil {
+		t.Fatalf("expected Database pointer to stay nil, got %#v", cfg.Database)
+	}
+}
+
+func TestLoad_PointerRequiredBoolFalseAccepted(t *testing.T) {
+	t.Setenv("ENABLED", "false")
+
+	type Config struct {
+		Enabled *bool `envx:"name=ENABLED,required=true"`
+	}
+
+	cfg, err := Load[Config]()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Enabled == nil || *cfg.Enabled {
+		t.Fatalf("expected Enabled pointer with false value, got %#v", cfg.Enabled)
+	}
+}
+
 func TestMustLoad_Panics(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {
