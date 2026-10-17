@@ -12,7 +12,6 @@ type envxTag struct {
 	Deprecated bool
 	Default    string
 	HasDefault bool
-	Enum       []string
 	Skip       bool
 }
 
@@ -72,8 +71,6 @@ func parseEnvxTag(raw string) envxTag {
 		case "default":
 			tag.Default = val
 			tag.HasDefault = true
-		case "enum":
-			tag.Enum = parseEnvxEnumList(val)
 		}
 	}
 
@@ -126,21 +123,4 @@ func splitEnvxTagParts(raw string) []string {
 	}
 
 	return parts
-}
-
-func parseEnvxEnumList(val string) []string {
-	val = strings.TrimSpace(val)
-	if val == "" {
-		return nil
-	}
-	parts := strings.Split(val, ",")
-	items := make([]string, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		items = append(items, part)
-	}
-	return items
 }

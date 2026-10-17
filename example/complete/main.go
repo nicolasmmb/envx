@@ -12,10 +12,27 @@ import (
 	"github.com/nicolasmmb/envx"
 )
 
+// Environment is a native enum: envx validates values through EnumValues.
+type Environment string
+
+const (
+	EnvironmentLocal      Environment = "local"
+	EnvironmentStaging    Environment = "staging"
+	EnvironmentProduction Environment = "production"
+)
+
+func (Environment) EnumValues() []string {
+	return []string{
+		string(EnvironmentLocal),
+		string(EnvironmentStaging),
+		string(EnvironmentProduction),
+	}
+}
+
 type Config struct {
-	Name string `envx:"name=NAME,default=envx-complete"`
-	Env  string `envx:"name=ENV,default=local,enum=\"local,staging,production\""`
-	Port int    `envx:"name=PORT,default=8080"`
+	Name string      `envx:"name=NAME,default=envx-complete"`
+	Env  Environment `envx:"name=ENV,default=local"`
+	Port int         `envx:"name=PORT,default=8080"`
 
 	Database struct {
 		URL      string `envx:"name=URL,required=true,secret=true"`

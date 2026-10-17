@@ -29,9 +29,25 @@ func (p *vaultProvider) Values() (map[string]any, error) {
 	return values, nil
 }
 
+type appEnv string
+
+const (
+	appEnvDev     appEnv = "dev"
+	appEnvStaging appEnv = "staging"
+	appEnvProd    appEnv = "prod"
+)
+
+func (appEnv) EnumValues() []string {
+	return []string{
+		string(appEnvDev),
+		string(appEnvStaging),
+		string(appEnvProd),
+	}
+}
+
 type Config struct {
 	DatabaseURL string `envx:"name=DATABASE_URL,required=true"`
-	AppEnv      string `envx:"name=APP_ENV,enum=\"dev,staging,prod\""`
+	AppEnv      appEnv `envx:"name=APP_ENV"`
 	LegacyToken string `envx:"name=LEGACY_TOKEN,deprecated=true"`
 }
 

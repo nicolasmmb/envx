@@ -11,6 +11,22 @@ import (
 	"github.com/nicolasmmb/envx"
 )
 
+type functionalMode string
+
+const (
+	functionalModeLocal      functionalMode = "local"
+	functionalModeStaging    functionalMode = "staging"
+	functionalModeProduction functionalMode = "production"
+)
+
+func (functionalMode) EnumValues() []string {
+	return []string{
+		string(functionalModeLocal),
+		string(functionalModeStaging),
+		string(functionalModeProduction),
+	}
+}
+
 func chdirTemp(t *testing.T) string {
 	t.Helper()
 
@@ -42,12 +58,12 @@ func TestFunctionalLoad_DefaultStack(t *testing.T) {
 	t.Setenv("MODE", "production")
 
 	type Config struct {
-		Port     int           `envx:"name=PORT,default=8080"`
-		AppName  string        `envx:"name=APP_NAME,default=default-app"`
-		Features []string      `envx:"name=FEATURES,default=logs,metrics"`
-		Timeout  time.Duration `envx:"name=TIMEOUT,default=30s"`
-		DBURL    string        `envx:"name=DB_URL,required=true,secret=true"`
-		Mode     string        `envx:"name=MODE,default=local,enum=\"local,staging,production\""`
+		Port     int            `envx:"name=PORT,default=8080"`
+		AppName  string         `envx:"name=APP_NAME,default=default-app"`
+		Features []string       `envx:"name=FEATURES,default=logs,metrics"`
+		Timeout  time.Duration  `envx:"name=TIMEOUT,default=30s"`
+		DBURL    string         `envx:"name=DB_URL,required=true,secret=true"`
+		Mode     functionalMode `envx:"name=MODE,default=local"`
 	}
 
 	cfg, err := envx.Load[Config](
@@ -71,7 +87,7 @@ func TestFunctionalLoad_DefaultStack(t *testing.T) {
 	if cfg.AppName != "dotenv-app" {
 		t.Fatalf("AppName = %q, want dotenv-app", cfg.AppName)
 	}
-	if cfg.Mode != "production" {
+	if cfg.Mode != functionalModeProduction {
 		t.Fatalf("Mode = %q, want production", cfg.Mode)
 	}
 	if cfg.DBURL != "postgres://dotenv/service" {

@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
-	"time"
 )
 
 type envProvider struct{}
@@ -71,7 +70,7 @@ func extractDefaults(t reflect.Type, path string) map[string]string {
 			continue
 		}
 
-		if field.Type.Kind() == reflect.Struct && field.Type != reflect.TypeOf(time.Time{}) {
+		if isNestedStruct(field.Type) {
 			nestedName := toScreamingSnake(field.Name)
 			if tag.Name != "" {
 				nestedName = tag.Name

@@ -42,7 +42,7 @@ func parseStruct(v reflect.Value, t reflect.Type, path string, values map[string
 			continue
 		}
 
-		if field.Type.Kind() == reflect.Struct && field.Type != reflect.TypeOf(time.Time{}) {
+		if isNestedStruct(field.Type) {
 			nestedName := toScreamingSnake(field.Name)
 			if tag.Name != "" {
 				nestedName = tag.Name
@@ -53,7 +53,7 @@ func parseStruct(v reflect.Value, t reflect.Type, path string, values map[string
 			}
 			continue
 		}
-		if field.Type.Kind() == reflect.Pointer && field.Type.Elem().Kind() == reflect.Struct && field.Type.Elem() != reflect.TypeOf(time.Time{}) {
+		if isNestedStructPointer(field.Type) {
 			nestedName := toScreamingSnake(field.Name)
 			if tag.Name != "" {
 				nestedName = tag.Name
@@ -89,7 +89,7 @@ func parseStruct(v reflect.Value, t reflect.Type, path string, values map[string
 			return &Error{Field: key, Err: fmt.Errorf("%w: %v", ErrParse, err)}
 		}
 
-		if err := validateEnumValue(key, fv, tag.Enum); err != nil {
+		if err := validateNativeEnum(key, fv); err != nil {
 			return err
 		}
 	}
@@ -116,7 +116,7 @@ func checkRequired(v reflect.Value, t reflect.Type, path string, values map[stri
 			continue
 		}
 
-		if field.Type.Kind() == reflect.Struct && field.Type != reflect.TypeOf(time.Time{}) {
+		if isNestedStruct(field.Type) {
 			nestedName := toScreamingSnake(field.Name)
 			if tag.Name != "" {
 				nestedName = tag.Name
@@ -127,7 +127,7 @@ func checkRequired(v reflect.Value, t reflect.Type, path string, values map[stri
 			}
 			continue
 		}
-		if field.Type.Kind() == reflect.Pointer && field.Type.Elem().Kind() == reflect.Struct && field.Type.Elem() != reflect.TypeOf(time.Time{}) {
+		if isNestedStructPointer(field.Type) {
 			if fv.IsNil() {
 				if tag.Required {
 					key := withPrefix(prefix, fieldKey(path, field.Name, tag.Name))
@@ -188,22 +188,6 @@ func isEmptyStringValue(v reflect.Value) bool {
 	return v.Kind() == reflect.String && v.String() == ""
 }
 
-func validateEnumValue(key string, fv reflect.Value, allowed []string) error {
-	if len(allowed) == 0 || !fv.IsValid() || fv.IsZero() {
-		return nil
-	}
-	if fv.Kind() != reflect.String {
-		return &Error{Field: key, Err: fmt.Errorf("%w: enum can only be used with string fields", ErrParse)}
-	}
-	val := fv.String()
-	for _, option := range allowed {
-		if val == option {
-			return nil
-		}
-	}
-	return &Error{Field: key, Err: fmt.Errorf("%w: %q not in enum", ErrParse, val)}
-}
-
 func logDeprecatedKey(logger Logger, key string) {
 	if logger == nil {
 		return
@@ -224,6 +208,10 @@ func setField(fv reflect.Value, val any) error {
 			fv.Set(reflect.New(fv.Type().Elem()))
 		}
 		return setField(fv.Elem(), val)
+	}
+
+	if handled, err := setFromTextUnmarshaler(fv, val); handled {
+		return err
 	}
 
 	switch fv.Kind() {

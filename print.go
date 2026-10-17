@@ -6,7 +6,6 @@ import (
 	"os"
 	"reflect"
 	"strings"
-	"time"
 )
 
 var secretMarkers = []string{"SECRET", "PASSWORD", "TOKEN", "KEY"}
@@ -47,7 +46,7 @@ func printStruct(w io.Writer, v reflect.Value, t reflect.Type, indent string) {
 			continue
 		}
 
-		if field.Type.Kind() == reflect.Struct && field.Type != reflect.TypeOf(time.Time{}) {
+		if isNestedStruct(field.Type) {
 			fmt.Fprintf(w, "%s%s:\n", indent, field.Name)
 			printStruct(w, fv, field.Type, indent+"  ")
 			continue

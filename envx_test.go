@@ -109,8 +109,8 @@ func TestLoad_Env(t *testing.T) {
 	}
 }
 
-func TestLoad_EnumValid(t *testing.T) {
-	t.Setenv("APP_ENV", "prod")
+func TestLoad_EnumTagIsIgnored(t *testing.T) {
+	t.Setenv("APP_ENV", "broken")
 
 	type Config struct {
 		Env string `envx:"name=APP_ENV,enum=\"dev,staging,prod\""`
@@ -120,40 +120,8 @@ func TestLoad_EnumValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.Env != "prod" {
-		t.Fatalf("Env = %s, want prod", cfg.Env)
-	}
-}
-
-func TestLoad_EnumInvalid(t *testing.T) {
-	t.Setenv("APP_ENV", "broken")
-
-	type Config struct {
-		Env string `envx:"name=APP_ENV,enum=\"dev,staging,prod\""`
-	}
-
-	_, err := Load[Config]()
-	if err == nil {
-		t.Fatal("expected enum validation error")
-	}
-	if !errors.Is(err, ErrParse) {
-		t.Fatalf("expected ErrParse, got %v", err)
-	}
-}
-
-func TestLoad_EnumNonString(t *testing.T) {
-	t.Setenv("LEVEL", "1")
-
-	type Config struct {
-		Level int `envx:"name=LEVEL,enum=\"1,2\""`
-	}
-
-	_, err := Load[Config]()
-	if err == nil {
-		t.Fatal("expected enum type error")
-	}
-	if !errors.Is(err, ErrParse) {
-		t.Fatalf("expected ErrParse, got %v", err)
+	if cfg.Env != "broken" {
+		t.Fatalf("Env = %s, want broken", cfg.Env)
 	}
 }
 
