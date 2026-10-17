@@ -8,6 +8,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/nicolasmmb/envx)](https://goreportcard.com/report/github.com/nicolasmmb/envx)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)](https://go.dev/)
+[![Latest Release](https://img.shields.io/github/v/release/nicolasmmb/envx?sort=semver&display_name=tag)](https://github.com/nicolasmmb/envx/releases)
 
 **Zero dependencies • Type-safe • Simple API • Hot reload**
 
@@ -772,6 +773,28 @@ envx.ErrRequired        // Required field empty
 envx.ErrValidation      // Validation failed
 envx.ErrParse           // Parse error
 envx.ErrUnsupportedType // Unsupported type
+```
+
+---
+
+## 📦 Versioning
+
+envx follows [Semantic Versioning](https://semver.org/). Releases are generated
+by [release-please](https://github.com/googleapis/release-please) from
+[Conventional Commits](https://www.conventionalcommits.org/) merged into `main`:
+
+| Commit | Release |
+|--------|---------|
+| `feat: ...` | minor (`1.1.0`) |
+| `fix: ...`, `refactor: ...`, `perf: ...` | patch (`1.0.1`) |
+| `docs: ...`, `chore: ...`, `test: ...`, `ci: ...` | none |
+
+A release PR bumps `version.go`; merging it creates the tag and the GitHub
+release. Breaking changes (`feat!:`) require a new major version and a `/v2`
+module path, so the automation never bumps the major on its own.
+
+```go
+fmt.Println(envx.Version) // "1.0.0"
 ```
 
 ---

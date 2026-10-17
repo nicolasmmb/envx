@@ -1,0 +1,41 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -race ./...
+
+  major-guard:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject release PRs proposing v2+
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          major=$(printf '%s' "$TITLE" | sed -nE 's/^chore\(.*\): release ([0-9]+)\..*/\1/p')
+          if [ -z "$major" ]; then
+            echo "Not a release PR, nothing to check."
+            exit 0
+          fi
+          if [ "$major" -gt 1 ]; then
+            echo "::error::PR proposes v${major}. v2+ requires a '/v2' module path in go.mod; release aborted."
+            exit 1
+          fi

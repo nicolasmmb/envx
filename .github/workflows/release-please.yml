@@ -1,0 +1,47 @@
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run release-please
+        id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          # Set RELEASE_PLEASE_TOKEN (fine-grained PAT with contents and
+          # pull-requests write) so that the release PR triggers CI.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - name: Guard against automatic major releases
+        if: steps.release.outputs.prs_created == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          prs=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open \
+            --json number,title \
+            --jq '.[] | select(.title | test("^chore\\(.*\\): release [0-9]+\\.")) | "\(.number)\t\(.title)"')
+          if [ -z "$prs" ]; then
+            exit 0
+          fi
+          while IFS=$'\t' read -r number title; do
+            major=$(printf '%s' "$title" | sed -nE 's/^chore\(.*\): release ([0-9]+)\..*/\1/p')
+            if [ -n "$major" ] && [ "$major" -gt 1 ]; then
+              echo "::error::PR #$number proposes v${major}. v2+ requires a '/v2' module path in go.mod; close the PR and migrate manually."
+              exit 1
+            fi
+          done <<< "$prs"
